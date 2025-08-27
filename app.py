@@ -324,16 +324,20 @@ def download_filtered_pdf():
         flash(f"Ein unerwarteter Fehler ist aufgetreten: {e}", "error")
         return redirect(url_for('fragen'))
 
-@app.route('/export_questions_pdf')
+# --- ANGEPASSTE Route ---
+@app.route('/export_questions_pdf', methods=['POST'])
 def export_questions_pdf():
     try:
+        # Bearbeitername aus dem Formular holen
+        bearbeiter = request.form.get('bearbeiter', 'N/A')
+        
         fragen_db = QuestionAnswer.query.all()
         if not fragen_db:
             flash("Keine Fragen zum Exportieren vorhanden.", "info")
             return redirect(url_for('fragen'))
 
         pdf = QuestionPDF(orientation='P', unit='mm', format='A4')
-        pdf.create_cover()
+        pdf.create_cover(bearbeiter) # Bearbeitername übergeben
         pdf.create_question_table(fragen_db)
         
         pdf_output = pdf.output(dest='S').encode('latin1')
@@ -437,10 +441,11 @@ class PDF(FPDF):
         self.cell(col_widths[3], 10, f"{int(hours):02}:{int(minutes):02}", 1)
         self.cell(sum(col_widths[4:]), 10, "", 1, 1)
 
+# --- ANGEPASSTE QuestionPDF Klasse ---
 class QuestionPDF(FPDF):
     def header(self):
         if self.page_no() > 1:
-            self.set_font('Arial', 'B', 12)
+            self.set_font('Arial', 'B', 16)
             self.cell(0, 10, 'Fragebogen zur ISO50001', 0, 1, 'C')
             self.ln(5)
     
@@ -450,51 +455,58 @@ class QuestionPDF(FPDF):
             self.set_font('Arial', 'I', 8)
             self.cell(0, 10, f'Seite {self.page_no() - 1}', 0, 0, 'C')
 
-    def create_cover(self):
+    def create_cover(self, bearbeiter_name):
         self.add_page()
         logo_path = os.path.join(basedir, 'static', 'img', 'logo.png')
         if os.path.exists(logo_path):
             try:
-                # FPDF hat eine Schwäche beim direkten Verarbeiten von manchen PNGs aus dem Speicher.
-                # Der sicherste Weg ist, das Bild explizit mit Pillow zu laden und als temporäre Datei 
-                # zu speichern, die FPDF dann zuverlässig laden kann.
                 with Image.open(logo_path) as img:
-                    self.set_y(50)
-                    # Temporären Pfad erstellen
-                    temp_logo_path = os.path.join(basedir, 'static', 'img', 'temp_logo.png')
+                    temp_logo_path = os.path.join(basedir, 'static', 'img', 'temp_logo_for_pdf.png')
                     img.save(temp_logo_path)
                     
-                    # Bild aus der temporären Datei laden
-                    self.image(temp_logo_path, x=self.w/2 - 45, y=20, w=90)
+                    # Logo größer (w=110) und zentriert (x=self.w/2 - 55)
+                    self.image(temp_logo_path, x=self.w/2 - 55, y=40, w=110)
                     
-                    # Temporäre Datei löschen
                     os.remove(temp_logo_path)
-
             except Exception as e:
                 print(f"Fehler beim Verarbeiten des Logos: {e}")
         
         # Titel
-        self.set_y(100)
+        self.set_y(120)
         self.set_font('Arial', 'B', 24)
         self.cell(0, 20, 'Fragebogen zur ISO50001', 0, 1, 'C')
         self.ln(20)
         
-        # Bearbeiter
+        # Bearbeiter und Datum weiter nach unten verschoben (set_y(180))
+        self.set_y(180)
         self.set_font('Arial', '', 12)
-        self.cell(0, 10, 'Bearbeiter: Helge Steinhorst', 0, 1, 'C')
+        self.cell(0, 10, f'Bearbeiter: {bearbeiter_name}', 0, 1, 'C')
         self.cell(0, 10, f'Datum: {date.today().strftime("%d.%m.%Y")}', 0, 1, 'C')
         
     def create_question_table(self, data):
         self.add_page()
+
+        logo_path = os.path.join(basedir, 'static', 'img', 'logo.png')
+        if os.path.exists(logo_path):
+            try:
+                with Image.open(logo_path) as img:
+                    temp_logo_path = os.path.join(basedir, 'static', 'img', 'temp_logo_for_pdf.png')
+                    img.save(temp_logo_path)
+                    
+                    # Logo größer (w=110) und zentriert (x=self.w/2 - 55)
+                    self.image(temp_logo_path, x=10, y=6, w=55)
+                    
+                    os.remove(temp_logo_path)
+            except Exception as e:
+                print(f"Fehler beim Verarbeiten des Logos: {e}")
+
+
+        row_height = 10
         
-        # Feste Zeilenhöhe
-        row_height = 15
-        
-        # Angepasste Spaltenbreiten
         col_widths = {
             "frage": 95,
             "optionen": 50,
-            "antwort": 45, # Leere Spalte
+            "antwort": 45,
         }
         
         def draw_header():
@@ -507,7 +519,6 @@ class QuestionPDF(FPDF):
         draw_header()
         
         for entry in data:
-            # Seitenumbruch-Check
             if self.get_y() + row_height > self.h - self.b_margin:
                 self.add_page()
                 draw_header()
@@ -515,16 +526,12 @@ class QuestionPDF(FPDF):
             x_start = self.get_x()
             y_start = self.get_y()
 
-            # Zelle für "Frage" mit Textumbruch und fester Höhe
             self.multi_cell(col_widths["frage"], row_height, entry.question, 1, 'L')
-            # Position für die nächste Zelle manuell setzen
             self.set_xy(x_start + col_widths["frage"], y_start)
             
-            # Zelle für "Antwortmöglichkeiten" mit Textumbruch und fester Höhe
             self.multi_cell(col_widths["optionen"], row_height, entry.options.replace(',', ', '), 1, 'L')
             self.set_xy(x_start + col_widths["frage"] + col_widths["optionen"], y_start)
             
-            # Leere Zelle "Antwort" mit fester Höhe
             self.cell(col_widths["antwort"], row_height, "", 1, 1, 'L')
 
 
