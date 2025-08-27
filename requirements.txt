@@ -1,1 +1,7 @@
-flask, flask_sqlalchemy, pandas, datetime, matplotlib, fpdf, openpyxl
+flask  
+flask_sqlalchemy
+pandas
+datetime
+matplotlib
+fpdf
+openpyxl
