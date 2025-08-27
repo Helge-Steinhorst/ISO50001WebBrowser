@@ -75,7 +75,7 @@ def begriffsfinder():
             flash("Bitte geben Sie einen Suchbegriff ein.", "error")
         else:
             try:
-                df = pd.read_excel('begriffe.xlsx', header=None)
+                df = pd.read_excel('Daten.xlsx', sheet_name='Begriffe', header=None)
                 search_area = df.iloc[13:]
                 match = search_area[search_area[3].astype(str).str.lower() == search_term.lower()]
                 if not match.empty:
@@ -95,12 +95,12 @@ def autocomplete_begriffe():
     suggestions = []
     if query:
         try:
-            df = pd.read_excel('begriffe.xlsx', header=None)
+            df = pd.read_excel('Daten.xlsx',sheet_name='Begriffe', header=None)
             matching_terms = df[df[3].astype(str).str.lower().str.startswith(query)].iloc[:, 3].unique()
             suggestions = matching_terms.tolist()
             suggestions = suggestions[:10]
         except FileNotFoundError:
-            suggestions = ["Fehler: 'begriffe.xlsx' nicht gefunden."]
+            suggestions = ["Fehler: 'Daten.xlsx' nicht gefunden."]
         except Exception as e:
             suggestions = [f"Ein Fehler ist aufgetreten: {e}"]
     return jsonify(suggestions)
