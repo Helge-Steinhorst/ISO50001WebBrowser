@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 
 from fpdf import FPDF
 from io import BytesIO
+from PIL import Image
 
 # --- App Konfiguration ---
 app = Flask(__name__)
@@ -84,7 +85,7 @@ def begriffsfinder():
                 else:
                     result = "Begriff nicht gefunden."
             except FileNotFoundError:
-                result = "Fehler: Die Datei 'begriffe.xlsx' wurde nicht im Hauptverzeichnis gefunden."
+                result = "Fehler: Die Datei 'Daten.xlsx' wurde nicht im Hauptverzeichnis gefunden."
             except Exception as e:
                 result = f"Ein unerwarteter Fehler ist aufgetreten: {e}"
     return render_template('begriffsfinder.html', search_term=search_term, result=result)
@@ -95,8 +96,9 @@ def autocomplete_begriffe():
     suggestions = []
     if query:
         try:
-            df = pd.read_excel('Daten.xlsx',sheet_name='Begriffe', header=None)
-            matching_terms = df[df[3].astype(str).str.lower().str.startswith(query)].iloc[:, 3].unique()
+            df = pd.read_excel('Daten.xlsx', sheet_name='Begriffe', header=None)
+            search_area = df.iloc[13:]
+            matching_terms = search_area[search_area[3].astype(str).str.lower().str.startswith(query)].iloc[:, 3].unique()
             suggestions = matching_terms.tolist()
             suggestions = suggestions[:10]
         except FileNotFoundError:
@@ -241,13 +243,14 @@ def download_filtered_pdf():
         if not fragen_db:
             flash("Es sind keine Fragen in der Datenbank gespeichert.", "error")
             return redirect(url_for('fragen'))
+        
+        answered_questions = [q for q in fragen_db if q.answer is not None]
+        if len(answered_questions) != len(fragen_db):
+             flash("Bitte beantworten Sie zuerst alle Fragen.", "error")
+             return redirect(url_for('fragen'))
 
-        filters = {q.question.strip(): q.answer.strip() for q in fragen_db if q.answer is not None}
-
-        if not filters:
-            flash("Bitte beantworten Sie zuerst alle Fragen.", "error")
-            return redirect(url_for('fragen'))
-
+        filters = {q.question.strip(): q.answer.strip() for q in answered_questions}
+        
         filtered_df = df_excel.copy()
         
         excel_cols_normalized = {col.strip().replace('?', '').strip(): col for col in df_excel.columns}
@@ -291,7 +294,7 @@ def download_filtered_pdf():
 
         if not solution_columns_df.empty:
             num_solutions = len(solution_headers)
-            col_width = pdf.w / (num_solutions + 1)
+            col_width = pdf.w / (num_solutions + 1) if num_solutions > 0 else pdf.w - 20
             
             pdf.set_font("Arial", 'B', 8)
             for header in solution_headers:
@@ -319,6 +322,30 @@ def download_filtered_pdf():
         return redirect(url_for('fragen'))
     except Exception as e:
         flash(f"Ein unerwarteter Fehler ist aufgetreten: {e}", "error")
+        return redirect(url_for('fragen'))
+
+@app.route('/export_questions_pdf')
+def export_questions_pdf():
+    try:
+        fragen_db = QuestionAnswer.query.all()
+        if not fragen_db:
+            flash("Keine Fragen zum Exportieren vorhanden.", "info")
+            return redirect(url_for('fragen'))
+
+        pdf = QuestionPDF(orientation='P', unit='mm', format='A4')
+        pdf.create_cover()
+        pdf.create_question_table(fragen_db)
+        
+        pdf_output = pdf.output(dest='S').encode('latin1')
+
+        return send_file(
+            BytesIO(pdf_output),
+            as_attachment=True,
+            download_name='Fragebogen_ISO50001.pdf',
+            mimetype='application/pdf'
+        )
+    except Exception as e:
+        flash(f"Ein Fehler beim Erstellen des PDFs ist aufgetreten: {e}", "error")
         return redirect(url_for('fragen'))
 
 # --- Hilfsfunktionen für Grafik & PDF ---
@@ -381,14 +408,26 @@ class PDF(FPDF):
                 entry.project,
                 entry.info_text or ""
             ]
-            start_y = self.get_y()
-            self.cell(col_widths[0], 10, row[0], 1)
-            self.cell(col_widths[1], 10, row[1], 1)
-            self.cell(col_widths[2], 10, row[2], 1)
-            self.cell(col_widths[3], 10, row[3], 1)
-            self.cell(col_widths[4], 10, row[4], 1)
-            self.cell(col_widths[5], 10, row[5], 1)
+            
+            x_start = self.get_x()
+            y_start = self.get_y()
+            
+            max_height = 10
+            lines = self.multi_cell(col_widths[6], 10, row[6], border=0, split_only=True)
+            if len(lines) * 10 > max_height:
+                 max_height = len(lines) * 10 if len(lines) > 1 else 10
+
+
+            self.set_xy(x_start, y_start)
+            self.cell(col_widths[0], max_height, row[0], 1)
+            self.cell(col_widths[1], max_height, row[1], 1)
+            self.cell(col_widths[2], max_height, row[2], 1)
+            self.cell(col_widths[3], max_height, row[3], 1)
+            self.cell(col_widths[4], max_height, row[4], 1)
+            self.cell(col_widths[5], max_height, row[5], 1)
+            
             self.multi_cell(col_widths[6], 10, row[6], 1)
+
         self.ln(5)
         self.set_font('Arial', 'B', 10)
         total_seconds = total_duration.total_seconds()
@@ -397,6 +436,97 @@ class PDF(FPDF):
         self.cell(sum(col_widths[:3]), 10, "Gesamtdauer:", 1)
         self.cell(col_widths[3], 10, f"{int(hours):02}:{int(minutes):02}", 1)
         self.cell(sum(col_widths[4:]), 10, "", 1, 1)
+
+class QuestionPDF(FPDF):
+    def header(self):
+        if self.page_no() > 1:
+            self.set_font('Arial', 'B', 12)
+            self.cell(0, 10, 'Fragebogen zur ISO50001', 0, 1, 'C')
+            self.ln(5)
+    
+    def footer(self):
+        if self.page_no() > 1:
+            self.set_y(-15)
+            self.set_font('Arial', 'I', 8)
+            self.cell(0, 10, f'Seite {self.page_no() - 1}', 0, 0, 'C')
+
+    def create_cover(self):
+        self.add_page()
+        logo_path = os.path.join(basedir, 'static', 'img', 'logo.png')
+        if os.path.exists(logo_path):
+            try:
+                # FPDF hat eine Schwäche beim direkten Verarbeiten von manchen PNGs aus dem Speicher.
+                # Der sicherste Weg ist, das Bild explizit mit Pillow zu laden und als temporäre Datei 
+                # zu speichern, die FPDF dann zuverlässig laden kann.
+                with Image.open(logo_path) as img:
+                    self.set_y(50)
+                    # Temporären Pfad erstellen
+                    temp_logo_path = os.path.join(basedir, 'static', 'img', 'temp_logo.png')
+                    img.save(temp_logo_path)
+                    
+                    # Bild aus der temporären Datei laden
+                    self.image(temp_logo_path, x=self.w/2 - 45, y=20, w=90)
+                    
+                    # Temporäre Datei löschen
+                    os.remove(temp_logo_path)
+
+            except Exception as e:
+                print(f"Fehler beim Verarbeiten des Logos: {e}")
+        
+        # Titel
+        self.set_y(100)
+        self.set_font('Arial', 'B', 24)
+        self.cell(0, 20, 'Fragebogen zur ISO50001', 0, 1, 'C')
+        self.ln(20)
+        
+        # Bearbeiter
+        self.set_font('Arial', '', 12)
+        self.cell(0, 10, 'Bearbeiter: Helge Steinhorst', 0, 1, 'C')
+        self.cell(0, 10, f'Datum: {date.today().strftime("%d.%m.%Y")}', 0, 1, 'C')
+        
+    def create_question_table(self, data):
+        self.add_page()
+        
+        # Feste Zeilenhöhe
+        row_height = 15
+        
+        # Angepasste Spaltenbreiten
+        col_widths = {
+            "frage": 95,
+            "optionen": 50,
+            "antwort": 45, # Leere Spalte
+        }
+        
+        def draw_header():
+            self.set_font('Arial', 'B', 10)
+            self.cell(col_widths["frage"], 10, 'Frage', 1, 0, 'C')
+            self.cell(col_widths["optionen"], 10, 'Antwortmöglichkeiten', 1, 0, 'C')
+            self.cell(col_widths["antwort"], 10, 'Antwort', 1, 1, 'C')
+            self.set_font('Arial', '', 9)
+
+        draw_header()
+        
+        for entry in data:
+            # Seitenumbruch-Check
+            if self.get_y() + row_height > self.h - self.b_margin:
+                self.add_page()
+                draw_header()
+
+            x_start = self.get_x()
+            y_start = self.get_y()
+
+            # Zelle für "Frage" mit Textumbruch und fester Höhe
+            self.multi_cell(col_widths["frage"], row_height, entry.question, 1, 'L')
+            # Position für die nächste Zelle manuell setzen
+            self.set_xy(x_start + col_widths["frage"], y_start)
+            
+            # Zelle für "Antwortmöglichkeiten" mit Textumbruch und fester Höhe
+            self.multi_cell(col_widths["optionen"], row_height, entry.options.replace(',', ', '), 1, 'L')
+            self.set_xy(x_start + col_widths["frage"] + col_widths["optionen"], y_start)
+            
+            # Leere Zelle "Antwort" mit fester Höhe
+            self.cell(col_widths["antwort"], row_height, "", 1, 1, 'L')
+
 
 if __name__ == '__main__':
     with app.app_context():

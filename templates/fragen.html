@@ -44,9 +44,14 @@
 
     <div class="form-container">
         <h2>Daten exportieren</h2>
-        <form action="{{ url_for('download_filtered_pdf') }}" method="POST">
-            <button type="submit" class="btn">Alle Abstimmungen getroffen</button>
-        </form>
+        <div class="export-buttons">
+            <form action="{{ url_for('download_filtered_pdf') }}" method="POST" style="display: inline-block; margin-right: 10px;">
+                <button type="submit" class="btn">Gefilterte Lösung exportieren</button>
+            </form>
+            <form action="{{ url_for('export_questions_pdf') }}" method="GET" style="display: inline-block;">
+                <button type="submit" class="btn">Fragebogen als PDF exportieren</button>
+            </form>
+        </div>
     </div>
     {% else %}
     <div class="form-container">
@@ -73,6 +78,10 @@
         }
         .question-item .btn-danger {
             margin-top: 1rem;
+        }
+        .export-buttons {
+            display: flex;
+            gap: 1rem;
         }
     </style>
 
