@@ -1,5 +1,6 @@
 import os
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
+import json
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 import pandas as pd
 from datetime import datetime, date, timedelta, time, timezone
@@ -65,6 +66,31 @@ def inject_now():
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/view_drawing/<string:filename>')
+def view_drawing(filename):
+    try:
+        filepath = os.path.join(basedir, 'visuals', filename)
+        with open(filepath, 'r', encoding='utf-8') as f:
+            xml_content = f.read()
+
+        # Konfigurationsobjekt erstellen
+        config = {
+            "xml": xml_content,
+            "background": "#ffffff",  # Hintergrund auf Weiß setzen
+            "toolbar": "top",
+            "lightbox": False,
+            "transparent": False
+        }
+        
+        diagram_data = json.dumps(config)
+        return render_template('view_drawing.html', diagram_data=diagram_data, drawing_name=filename)
+    except FileNotFoundError:
+        flash(f"Zeichnung '{filename}' nicht gefunden.", "error")
+        return redirect(url_for('index'))
+    except Exception as e:
+        flash(f"Fehler beim Laden der Zeichnung: {e}", "error")
+        return redirect(url_for('index'))
 
 @app.route('/begriffsfinder', methods=['GET', 'POST'])
 def begriffsfinder():

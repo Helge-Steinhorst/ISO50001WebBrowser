@@ -26,6 +26,12 @@
                 <li class="nav-item">
                     <a href="{{ url_for('fragen') }}" class="nav-links">Fragen & Abstimmungen</a>
                 </li>
+                <li class="nav-item dropdown">
+                    <a href="#" class="nav-links">Zeichnungen</a>
+                    <div class="dropdown-content">
+                        <a href="{{ url_for('view_drawing', filename='Messungen.drawio') }}">Messungen</a>
+                    </div>
+                </li>
             </ul>
         </div>
     </nav>
