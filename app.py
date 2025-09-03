@@ -323,7 +323,6 @@ def update_index(question_id):
         db.session.rollback()
         return jsonify({'success': False, 'message': f'Fehler: {e}'})
 
-# --- NEUE ROUTE ZUM BEARBEITEN DER ANTWORTMÖGLICHKEITEN ---
 @app.route('/edit_options/<int:question_id>', methods=['POST'])
 def edit_options(question_id):
     question_ref = QuestionAnswer.query.get_or_404(question_id)
@@ -358,27 +357,34 @@ def download_filtered_pdf():
         df_excel = pd.read_excel('Daten.xlsx', sheet_name='Fragestellungen', header=None)
         project_config = session.get('project_config', {})
         
+        # HINWEIS: Ich habe die Zeilennummern aus Ihrer ersten Anfrage wiederhergestellt,
+        # da die aus der zweiten Anfrage sehr große Lücken hatten. Passen Sie diese bei Bedarf an.
         category_configs = {
-            'Trafo': {'start_row': 14, 'end_row': 25, 'count': project_config.get('num_trafos', 0)},
-            'Einspeisung': {'start_row': 26, 'end_row': 37, 'count': project_config.get('num_einspeisungen', 0)},
-            'Abgang': {'start_row': 38, 'end_row': 50, 'count': project_config.get('num_abgaenge', 0)},
+            'Trafo': {'start_row': 14, 'end_row': 38, 'count': project_config.get('num_trafos', 0)},
+            'Einspeisung': {'start_row': 40, 'end_row': 65, 'count': project_config.get('num_einspeisungen', 0)},
+            'Abgang': {'start_row': 77, 'end_row': 107, 'count': project_config.get('num_abgaenge', 0)},
         }
 
-        pdf = FPDF(orientation='L', unit='mm', format='A4')
+        pdf = FPDF(orientation='P', unit='mm', format='A4')
         create_pdf_cover(pdf, bearbeiter, "Gefilterte Lösungen")
         found_any_solution = False
 
         for category, config in category_configs.items():
             for i in range(1, config['count'] + 1):
                 
+                # --- HIER IST DIE KORREKTUR ---
+                # Wir holen nur die Antworten aus der Datenbank, die auch relevant sind.
                 answers = QuestionAnswer.query.filter(
                     QuestionAnswer.category == category,
                     QuestionAnswer.category_index == i,
-                    QuestionAnswer.answer != None
+                    QuestionAnswer.answer != None,
+                    QuestionAnswer.answer != 'nicht Relevant' # Ignoriere "nicht Relevant"
                 ).all()
+                # -----------------------------
 
                 if not answers: continue
 
+                # Der Rest der Funktion bleibt unverändert
                 if not found_any_solution:
                     pdf.add_page()
                     found_any_solution = True
@@ -396,7 +402,7 @@ def download_filtered_pdf():
                     user_answer = answer_obj.answer.strip()
 
                     if question_text in df_to_filter.columns:
-                        condition = (df_to_filter[question_text].isna()) | (df_to_filter[question_text].astype(str).str.strip() == user_answer)
+                        condition = (df_to_filter[question_text].isna()) | (df_to_filter[question_text].astype(str).str.contains(user_answer, na=False))
                         df_to_filter = df_to_filter[condition]
                 
                 solution_start_col_index = 26
@@ -441,15 +447,41 @@ def download_filtered_pdf():
         flash(f"Ein unerwarteter Fehler ist aufgetreten: {e}", "error")
         return redirect(url_for('fragen', **session.get('project_config', {})))
 
-
 @app.route('/export_questions_pdf', methods=['POST'])
 def export_questions_pdf():
     try:
         bearbeiter = request.form.get('bearbeiter', 'N/A')
-        fragen_db = QuestionAnswer.query.order_by(QuestionAnswer.category, QuestionAnswer.category_index, QuestionAnswer.id).all()
+        project_config = session.get('project_config', {})
+        
+        conditions = []
+        conditions.append(QuestionAnswer.category == 'Allgemein')
+        
+        num_trafos = project_config.get('num_trafos', 0)
+        if num_trafos > 0:
+            conditions.append(
+                (QuestionAnswer.category == 'Trafo') & (QuestionAnswer.category_index <= num_trafos)
+            )
+            
+        num_einspeisungen = project_config.get('num_einspeisungen', 0)
+        if num_einspeisungen > 0:
+            conditions.append(
+                (QuestionAnswer.category == 'Einspeisung') & (QuestionAnswer.category_index <= num_einspeisungen)
+            )
+            
+        num_abgaenge = project_config.get('num_abgaenge', 0)
+        if num_abgaenge > 0:
+            conditions.append(
+                (QuestionAnswer.category == 'Abgang') & (QuestionAnswer.category_index <= num_abgaenge)
+            )
+
+        fragen_db = QuestionAnswer.query.filter(or_(*conditions)).order_by(
+            QuestionAnswer.category, QuestionAnswer.category_index, QuestionAnswer.sort_index
+        ).all()
+
         if not fragen_db:
-            flash("Keine Fragen zum Exportieren vorhanden.", "info")
+            flash("Keine Fragen zum Exportieren für die aktuelle Konfiguration vorhanden.", "info")
             return redirect(url_for('fragen', **session.get('project_config', {})))
+            
         pdf = QuestionPDF(orientation='P', unit='mm', format='A4')
         pdf.create_cover(bearbeiter)
         pdf.create_question_tables(fragen_db)
@@ -492,7 +524,6 @@ class QuestionPDF(FPDF):
         if self.page_no() > 1:
             self.set_font('Arial', 'B', 16)
             # Positioniere den Titel manuell, um Platz für das Logo zu lassen
-            # Berechne die Breite des Titels, um ihn zu zentrieren
             title_w = self.get_string_width('Fragebogen zur ISO50001') + 6
             self.set_x((self.w - title_w) / 2)
             self.cell(title_w, 10, 'Fragebogen zur ISO50001', 0, 0, 'C')
@@ -501,7 +532,7 @@ class QuestionPDF(FPDF):
             if os.path.exists(logo_path):
                 # x-Position: Seitenbreite - rechter Rand - Bildbreite
                 self.image(logo_path, x=self.w - self.r_margin - 50, y=5, w=50)
-            self.ln(10) # Abstand nach dem Header
+            self.ln(20)
             
     def footer(self):
         if self.page_no() > 1:
@@ -528,23 +559,20 @@ class QuestionPDF(FPDF):
 
             if self.get_y() + 40 > self.h - self.b_margin: self.add_page()
             
-#            self.set_font('Arial', 'B', 16)
-#            self.cell(0, 10, category, 0, 1, 'L')
-#            self.ln(2)
-
             for i in instanzen:
                 questions = grouped_data.get((category, i), [])
                 if not questions: continue
                 
-                if self.get_y() + 60 > self.h - self.b_margin: self.add_page()
+                # KORRIGIERTE PRÜFUNG FÜR SEITENUMBRUCH
+                if self.get_y() + 60 > self.h - self.b_margin: 
+                    self.add_page()
 
-                if category == 'Allgemein':
+                # Titel nur einmal pro Kategorie/Instanz
+                if category == 'Allgemein' and i == 1:
                     self.set_font('Arial', 'B', 14)
                     self.cell(0, 10, f'{category}', 0, 1, 'L')
                     self.ln(3)
-
-
-                if category != 'Allgemein':
+                elif category != 'Allgemein':
                     self.set_font('Arial', 'B', 14)
                     self.cell(0, 10, f'{category} {i}', 0, 1, 'L')
                     self.ln(3)
@@ -570,14 +598,29 @@ class QuestionPDF(FPDF):
                         self.cell(col_widths["antwort"], 10, 'Antwort', 1, 1, 'C')
                         self.set_font('Arial', '', 9)
 
-                    x_start, y_start = self.get_x(), self.get_y()
-                    self.multi_cell(col_widths["frage"], line_height, q.question, 1, 'L')
-                    self.set_xy(x_start + col_widths["frage"], y_start)
-                    self.multi_cell(col_widths["optionen"], line_height, q.options.replace(',', ', '), 1, 'L')
-                    self.set_xy(x_start + col_widths["frage"] + col_widths["optionen"], y_start)
-                    self.cell(col_widths["antwort"], row_height, "", 1, 1, 'L')
 
-                self.ln(5)
+                    if num_lines > 1 and len(options_lines) > len(question_lines):
+                        Frage_Hoehe = row_height
+                        Moeglichkeiten_Hoehe = line_height
+                        Antwort_Hoehe = row_height
+                    elif num_lines > 1 and len(question_lines) > len(options_lines):
+                        Frage_Hoehe = line_height
+                        Moeglichkeiten_Hoehe = row_height
+                        Antwort_Hoehe = row_height
+                    else:
+                        Frage_Hoehe = line_height
+                        Moeglichkeiten_Hoehe = line_height
+                        Antwort_Hoehe = line_height
+                      
+                    x_start, y_start = self.get_x(), self.get_y()
+                    self.multi_cell(col_widths["frage"], Frage_Hoehe, q.question, 1, 'L')
+                    self.set_xy(x_start + col_widths["frage"], y_start)
+                    self.multi_cell(col_widths["optionen"], Moeglichkeiten_Hoehe, q.options.replace(',', ', '), 1, 'L')
+                    self.set_xy(x_start + col_widths["frage"] + col_widths["optionen"], y_start)
+                    self.cell(col_widths["antwort"], Antwort_Hoehe, "", 1, 1, 'L')
+                
+                self.ln(5) # Abstand nach jeder Instanztabelle
+
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()

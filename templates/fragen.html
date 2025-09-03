@@ -57,7 +57,7 @@
         
         {% for category_name, count in categories %}
             {% for i in range(1, count + 1) %}
-            <div id="{{ category_name }}-{{ i }}" class="tab-content">
+            <div id="{{ category_name }}-{{ i }}" class="tab-content" style="{{ 'display:block;' if loop.first and category_name == 'Allgemein' else 'display:none;' }}">
                 
                 <h2>{{ category_name }}{{ ' ' + i|string if category_name != 'Allgemein' }}</h2>
                 
@@ -78,10 +78,15 @@
                     </form>
                 </div>
 
+
+
                 <div class="questions-list">
                     <h3>Bestehende Fragen <button class="btn btn-sm" onclick="location.reload()">Reihenfolge neu laden</button></h3>
-                    <form method="POST">
+                    
+                    {# KORREKTUR 1: Geben Sie dem Formular eine eindeutige ID pro Tab #}
+                    <form method="POST" action="{{ url_for('fragen') }}" id="answers-form-{{ category_name }}-{{ i }}">
                         <input type="hidden" name="save_answers" value="1">
+                        
                         {% set current_questions = grouped_questions.get((category_name, i), []) %}
                         {% if not current_questions %}
                             <p>Noch keine Fragen in dieser Kategorie vorhanden.</p>
@@ -103,17 +108,30 @@
                                     </div>
                                     <div class="question-actions">
                                         <button type="button" class="btn btn-secondary btn-sm" onclick="toggleEditForm({{ frage.id }})">Bearbeiten</button>
+                                        
+                                        {# Dieser Button ist in Ordnung, da er formaction verwendet #}
                                         <button type="submit" formaction="{{ url_for('delete_question', question_id=frage.id) }}" class="btn btn-danger btn-sm">Löschen</button>
                                     </div>
+
                                     <div id="edit-form-{{ frage.id }}" class="edit-form" style="display:none;">
-                                        <form action="{{ url_for('edit_options', question_id=frage.id) }}" method="POST">
-                                            <div class="form-group">
-                                                <label for="options-{{ frage.id }}">Optionen bearbeiten (kommasepariert):</label>
-                                                <input type="text" id="options-{{ frage.id }}" name="new_options" value="{{ frage.options }}">
-                                            </div>
-                                            <button type="submit" class="btn btn-sm">Speichern</button>
-                                            <button type="button" class="btn btn-sm btn-secondary" onclick="toggleEditForm({{ frage.id }})">Abbrechen</button>
-                                        </form>
+                                        
+                                        {# KORREKTUR 2: Entfernen Sie das verschachtelte <form>-Tag #}
+                                        {# <form action="{{ url_for('edit_options', question_id=frage.id) }}" method="POST"> #}
+                                            
+                                        <div class="form-group">
+                                            <label for="options-{{ frage.id }}">Optionen bearbeiten (kommasepariert):</label>
+                                            {# Wichtig: Das name-Attribut muss vorhanden sein, damit die Daten gesendet werden #}
+                                            <input type="text" id="options-{{ frage.id }}" name="new_options" value="{{ frage.options }}">
+                                        </div>
+                                        
+                                        {# KORREKTUR 3: Ändern Sie die Buttons so, dass sie sich auf das äußere Formular beziehen #}
+                                        <button type="submit" class="btn btn-sm" 
+                                                form="answers-form-{{ category_name }}-{{ i }}" 
+                                                formaction="{{ url_for('edit_options', question_id=frage.id) }}">Speichern</button>
+                                                
+                                        <button type="button" class="btn btn-sm btn-secondary" onclick="toggleEditForm({{ frage.id }})">Abbrechen</button>
+                                        
+                                        {# </form> #}
                                     </div>
                                 </div>
                                 <div class="index-input">
@@ -122,7 +140,7 @@
                                 </div>
                             </div>
                             {% endfor %}
-                            <button type="submit" formaction="{{ url_for('fragen') }}" class="btn">Antworten speichern</button>
+                            <button type="submit" class="btn">Antworten speichern</button>
                         {% endif %}
                     </form>
                 </div>
@@ -132,7 +150,7 @@
     </div>
 
     <div class="form-container export-section">
-          <h2>Export & Auswertung</h2>
+        <h2>Export & Auswertung</h2>
         <form action="{{ url_for('download_filtered_pdf') }}" method="POST" style="margin-bottom: 2rem;">
             <div class="form-group">
                 <label for="bearbeiter_filter">Bearbeitername:</label>
@@ -195,8 +213,6 @@
             }
         }
 
-
-        // NEUE Funktion zum Ein-/Ausblenden des Bearbeiten-Formulars
         function toggleEditForm(questionId) {
             const form = document.getElementById(`edit-form-${questionId}`);
             if (form.style.display === 'none') {
@@ -205,7 +221,6 @@
                 form.style.display = 'none';
             }
         }
-
     </script>
 
     <style>
@@ -224,36 +239,20 @@
             padding-bottom: 1rem;
             border-bottom: 1px solid var(--border-color);
         }
-        .question-content {
-            flex-grow: 1;
-        }
-        .index-input {
-            text-align: center;
-        }
-        .index-input label {
-            font-size: 0.8rem;
-            display: block;
-            margin-bottom: 0.25rem;
-        }
+        .question-content { flex-grow: 1; }
+        .index-input { text-align: center; }
+        .index-input label { font-size: 0.8rem; display: block; margin-bottom: 0.25rem; }
         .index-input input {
-            width: 70px;
-            padding: 0.5rem;
-            font-size: 1.2rem;
-            text-align: center;
-            border: 1px solid var(--border-color);
-            background-color: var(--primary-bg-color);
-            color: var(--primary-text-color);
-            border-radius: 4px;
+            width: 70px; padding: 0.5rem; font-size: 1.2rem; text-align: center;
+            border: 1px solid var(--border-color); background-color: var(--primary-bg-color);
+            color: var(--primary-text-color); border-radius: 4px;
         }
-        .question-item .options {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 1rem;
-            margin: 0.5rem 0;
-        }
+        .question-item .options { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0.5rem 0; }
+        .question-actions { margin-bottom: 1rem; }
         .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
         .export-section { margin-top: 3rem; }
-                .edit-form {
+        
+        .edit-form {
             margin-top: 1rem;
             padding: 1rem;
             background-color: var(--primary-bg-color);
