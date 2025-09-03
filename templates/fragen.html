@@ -1,91 +1,267 @@
 {% extends 'base.html' %}
 
-{% block title %}Fragen & Abstimmungen{% endblock %}
+{% block title %}Fragenkatalog Konfiguration{% endblock %}
 
 {% block content %}
-    <h1>Fragen & Abstimmungen</h1>
+    <h1>Fragenkatalog</h1>
 
+    {% if not project_config or not (project_config.num_trafos or project_config.num_einspeisungen or project_config.num_abgaenge) %}
+    
     <div class="form-container">
-        <h2>Neue Frage erstellen</h2>
-        <form action="{{ url_for('fragen') }}" method="POST">
+        <h2>Projekt Konfiguration</h2>
+        <p>Bitte geben Sie die Anzahl der Komponenten für Ihr Projekt an.</p>
+        <form action="{{ url_for('fragen') }}" method="GET">
             <div class="form-group">
-                <label for="new_question">Frage:</label>
-                <input type="text" id="new_question" name="new_question" placeholder="Gib hier deine Frage ein..." required>
+                <label for="num_trafos">Anzahl der Trafostationen:</label>
+                <input type="number" id="num_trafos" name="num_trafos" min="0" value="0" required>
             </div>
             <div class="form-group">
-                <label for="options">Antwortoptionen (kommasepariert):</label>
-                <input type="text" id="options" name="options" placeholder="z.B. Ja,Nein,Vielleicht" required>
+                <label for="num_einspeisungen">Anzahl der Einspeisungen:</label>
+                <input type="number" id="num_einspeisungen" name="num_einspeisungen" min="0" value="0" required>
             </div>
-            <button type="submit" class="btn">Frage erstellen</button>
+            <div class="form-group">
+                <label for="num_abgaenge">Anzahl der Abgangsfelder:</label>
+                <input type="number" id="num_abgaenge" name="num_abgaenge" min="0" value="0" required>
+            </div>
+            <button type="submit" name="setup_submit" value="1" class="btn">Konfiguration starten</button>
         </form>
     </div>
 
-    {% if fragen %}
-    <div class="form-container">
-        <h2>Abstimmungen</h2>
-        <form action="{{ url_for('fragen') }}" method="POST">
-            {% for frage in fragen %}
-                <div class="question-item">
-                    <h3>{{ frage.question }}</h3>
-                    <div class="form-group">
-                        {% set options = frage.options.split(',') %}
-                        {% for option in options %}
-                        <label>
-                            <input type="radio" name="answer_{{ frage.id }}" value="{{ option.strip() }}" {% if frage.answer == option.strip() %}checked{% endif %} required> {{ option.strip() }}
-                        </label>
-                        {% endfor %}
-                    </div>
-                    <button type="submit" formaction="{{ url_for('delete_question', question_id=frage.id) }}" formmethod="POST" class="btn btn-danger">Frage löschen</button>
-                </div>
+    {% else %}
+
+    <div class="project-config-info">
+        <p>
+            <b>Aktuelle Konfiguration:</b> 
+            {{ project_config.num_trafos }} Trafo(s), 
+            {{ project_config.num_einspeisungen }} Einspeisung(en), 
+            {{ project_config.num_abgaenge }} Abgangsfeld(er).
+        </p>
+        <a href="{{ url_for('reset_fragen_config') }}" class="btn btn-danger">Neue Konfiguration einrichten</a>
+    </div>
+
+    <div class="tabs">
+        <div class="tab-header">
+            <button class="tab-link" data-tab="Allgemein-1" onclick="openTab(event, 'Allgemein-1')">Allgemein</button>
+            {% for i in range(1, project_config.num_trafos + 1) %}
+            <button class="tab-link" data-tab="Trafo-{{ i }}" onclick="openTab(event, 'Trafo-{{ i }}')">Trafo {{ i }}</button>
             {% endfor %}
-            <button type="submit" class="btn">Antworten speichern</button>
-        </form>
+            {% for i in range(1, project_config.num_einspeisungen + 1) %}
+            <button class="tab-link" data-tab="Einspeisung-{{ i }}" onclick="openTab(event, 'Einspeisung-{{ i }}')">Einspeisung {{ i }}</button>
+            {% endfor %}
+            {% for i in range(1, project_config.num_abgaenge + 1) %}
+            <button class="tab-link" data-tab="Abgang-{{ i }}" onclick="openTab(event, 'Abgang-{{ i }}')">Abgang {{ i }}</button>
+            {% endfor %}
+        </div>
+
+        {% set categories = [('Allgemein', 1), ('Trafo', project_config.num_trafos), ('Einspeisung', project_config.num_einspeisungen), ('Abgang', project_config.num_abgaenge)] %}
+        
+        {% for category_name, count in categories %}
+            {% for i in range(1, count + 1) %}
+            <div id="{{ category_name }}-{{ i }}" class="tab-content">
+                
+                <h2>{{ category_name }}{{ ' ' + i|string if category_name != 'Allgemein' }}</h2>
+                
+                <div class="form-container">
+                    <h3>Neue Frage erstellen</h3>
+                    <form action="{{ url_for('fragen') }}" method="POST">
+                        <input type="hidden" name="category" value="{{ category_name }}">
+                        <input type="hidden" name="category_index" value="{{ i }}">
+                        <div class="form-group">
+                            <label for="new_question-{{ category_name }}-{{ i }}">Frage:</label>
+                            <input type="text" id="new_question-{{ category_name }}-{{ i }}" name="new_question" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="options-{{ category_name }}-{{ i }}">Antwortoptionen (kommasepariert):</label>
+                            <input type="text" id="options-{{ category_name }}-{{ i }}" name="options" placeholder="z.B. Ja,Nein" required>
+                        </div>
+                        <button type="submit" name="new_question" value="1" class="btn">Frage hinzufügen</button>
+                    </form>
+                </div>
+
+                <div class="questions-list">
+                    <h3>Bestehende Fragen <button class="btn btn-sm" onclick="location.reload()">Reihenfolge neu laden</button></h3>
+                    <form method="POST">
+                        <input type="hidden" name="save_answers" value="1">
+                        {% set current_questions = grouped_questions.get((category_name, i), []) %}
+                        {% if not current_questions %}
+                            <p>Noch keine Fragen in dieser Kategorie vorhanden.</p>
+                        {% else %}
+                            {% for frage in current_questions %}
+                            <div class="question-item">
+                                <div class="question-content">
+                                    <p><strong>{{ frage.question }}</strong></p>
+                                    <div class="options">
+                                        {% for option in frage.options.split(',') %}
+                                        <label>
+                                            <input type="radio" name="answer_{{ frage.id }}" value="{{ option.strip() }}" {% if frage.answer == option.strip() %}checked{% endif %}> {{ option.strip() }}
+                                        </label>
+                                        {% endfor %}
+                                        <label>
+                                            <input type="radio" name="answer_{{ frage.id }}" value="nicht Relevant" {% if frage.answer == 'nicht Relevant' %}checked{% endif %}> 
+                                            <i>nicht Relevant</i>
+                                        </label>
+                                    </div>
+                                    <div class="question-actions">
+                                        <button type="button" class="btn btn-secondary btn-sm" onclick="toggleEditForm({{ frage.id }})">Bearbeiten</button>
+                                        <button type="submit" formaction="{{ url_for('delete_question', question_id=frage.id) }}" class="btn btn-danger btn-sm">Löschen</button>
+                                    </div>
+                                    <div id="edit-form-{{ frage.id }}" class="edit-form" style="display:none;">
+                                        <form action="{{ url_for('edit_options', question_id=frage.id) }}" method="POST">
+                                            <div class="form-group">
+                                                <label for="options-{{ frage.id }}">Optionen bearbeiten (kommasepariert):</label>
+                                                <input type="text" id="options-{{ frage.id }}" name="new_options" value="{{ frage.options }}">
+                                            </div>
+                                            <button type="submit" class="btn btn-sm">Speichern</button>
+                                            <button type="button" class="btn btn-sm btn-secondary" onclick="toggleEditForm({{ frage.id }})">Abbrechen</button>
+                                        </form>
+                                    </div>
+                                </div>
+                                <div class="index-input">
+                                    <label for="index-{{ frage.id }}">Index</label>
+                                    <input type="number" id="index-{{ frage.id }}" value="{{ frage.sort_index }}" onchange="updateIndex({{ frage.id }}, this.value)">
+                                </div>
+                            </div>
+                            {% endfor %}
+                            <button type="submit" formaction="{{ url_for('fragen') }}" class="btn">Antworten speichern</button>
+                        {% endif %}
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        {% endfor %}
     </div>
 
-    <div class="form-container">
-        <h2>Daten exportieren</h2>
-        
+    <div class="form-container export-section">
+          <h2>Export & Auswertung</h2>
         <form action="{{ url_for('download_filtered_pdf') }}" method="POST" style="margin-bottom: 2rem;">
-            <button type="submit" class="btn">Gefilterte Lösung exportieren</button>
+            <div class="form-group">
+                <label for="bearbeiter_filter">Bearbeitername:</label>
+                <input type="text" id="bearbeiter_filter" name="bearbeiter" placeholder="Ihr Name" required>
+            </div>
+            <button type="submit" class="btn">Alle Abstimmungen getroffen (Lösung filtern)</button>
         </form>
-        
         <hr>
-
         <h3 style="margin-top: 2rem;">Fragebogen als PDF exportieren</h3>
         <form action="{{ url_for('export_questions_pdf') }}" method="POST">
             <div class="form-group">
-                <label for="bearbeiter">Bearbeitername:</label>
-                <input type="text" id="bearbeiter" name="bearbeiter" placeholder="Dein Name" required>
+                <label for="bearbeiter_export">Bearbeitername:</label>
+                <input type="text" id="bearbeiter_export" name="bearbeiter" placeholder="Ihr Name" required>
             </div>
             <button type="submit" class="btn">Fragebogen exportieren</button>
         </form>
     </div>
-    {% else %}
-    <div class="form-container">
-        <p>Noch keine Fragen erstellt.</p>
-    </div>
-    {% endif %}
+
+    <script>
+        function openTab(evt, tabName) {
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tab-content");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+            }
+            tablinks = document.getElementsByClassName("tab-link");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" active", "");
+            }
+            document.getElementById(tabName).style.display = "block";
+            if(evt) {
+                evt.currentTarget.className += " active";
+            } else {
+                document.querySelector(`.tab-link[data-tab='${tabName}']`).classList.add('active');
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", function() {
+            const activeTabName = window.location.hash.substring(1);
+            if (activeTabName && document.getElementById(activeTabName)) {
+                openTab(null, activeTabName);
+            } else if (document.querySelector('.tab-link')) {
+                document.querySelector('.tab-link').click();
+            }
+        });
+
+        async function updateIndex(questionId, newIndex) {
+            try {
+                const response = await fetch(`/update_index/${questionId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `index=${newIndex}`
+                });
+                const result = await response.json();
+                if (!result.success) {
+                    alert(`Fehler beim Speichern des Index: ${result.message}`);
+                }
+            } catch (error) {
+                alert(`Ein Netzwerkfehler ist aufgetreten: ${error}`);
+            }
+        }
+
+
+        // NEUE Funktion zum Ein-/Ausblenden des Bearbeiten-Formulars
+        function toggleEditForm(questionId) {
+            const form = document.getElementById(`edit-form-${questionId}`);
+            if (form.style.display === 'none') {
+                form.style.display = 'block';
+            } else {
+                form.style.display = 'none';
+            }
+        }
+
+    </script>
 
     <style>
+        .project-config-info { background-color: var(--secondary-bg-color); padding: 1rem; border-radius: 8px; margin-bottom: 2rem; border: 1px solid var(--border-color); }
+        .tabs .tab-header { overflow: hidden; border-bottom: 1px solid var(--accent-color); margin-bottom: 1rem; }
+        .tabs .tab-link { background-color: inherit; float: left; border: none; outline: none; cursor: pointer; padding: 14px 16px; transition: 0.3s; color: var(--primary-text-color); font-size: 1rem; }
+        .tabs .tab-link:hover { background-color: var(--secondary-bg-color); }
+        .tabs .tab-link.active { background-color: var(--accent-color); color: white; }
+        .tab-content { display: none; padding: 6px 12px; border-top: none; }
         .question-item {
-            border: 1px solid var(--border-color);
-            padding: 1rem;
-            border-radius: 8px;
-            margin-bottom: 1rem;
-        }
-        .question-item h3 {
-            margin-top: 0;
-            margin-bottom: 0.5rem;
-            color: var(--primary-text-color);
-        }
-        .question-item .form-group {
             display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
             gap: 1.5rem;
-            align-items: center;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
         }
-        .question-item .btn-danger {
+        .question-content {
+            flex-grow: 1;
+        }
+        .index-input {
+            text-align: center;
+        }
+        .index-input label {
+            font-size: 0.8rem;
+            display: block;
+            margin-bottom: 0.25rem;
+        }
+        .index-input input {
+            width: 70px;
+            padding: 0.5rem;
+            font-size: 1.2rem;
+            text-align: center;
+            border: 1px solid var(--border-color);
+            background-color: var(--primary-bg-color);
+            color: var(--primary-text-color);
+            border-radius: 4px;
+        }
+        .question-item .options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin: 0.5rem 0;
+        }
+        .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
+        .export-section { margin-top: 3rem; }
+                .edit-form {
             margin-top: 1rem;
+            padding: 1rem;
+            background-color: var(--primary-bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
         }
+        .edit-form .form-group { margin-bottom: 1rem; }
     </style>
 
+    {% endif %}
 {% endblock %}
