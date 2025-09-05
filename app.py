@@ -8,6 +8,8 @@ from datetime import datetime, date, timedelta, time, timezone
 from io import BytesIO
 from PIL import Image
 from fpdf import FPDF
+import matplotlib
+matplotlib.use('Agg') # <-- WICHTIG: Diese Zeile muss VOR dem Import von pyplot stehen
 import matplotlib.pyplot as plt
 import re
 
