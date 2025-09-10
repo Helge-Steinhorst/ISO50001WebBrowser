@@ -1,9 +1,12 @@
 <mxfile host="65bd71144e">
     <diagram id="XCJENHY22G7sqInwDxFE" name="Page-1">
-        <mxGraphModel dx="2593" dy="1191" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="1654" background="#ffffff" math="0" shadow="0">
+        <mxGraphModel dx="2031" dy="771" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="1654" background="#ffffff" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
+                <mxCell id="136" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="595" width="330" height="905" as="geometry"/>
+                </mxCell>
                 <mxCell id="64" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;" vertex="1" parent="1">
                     <mxGeometry x="30" y="220" width="330" height="340" as="geometry"/>
                 </mxCell>
@@ -570,6 +573,78 @@
                 </mxCell>
                 <mxCell id="135" value="Prüfgerät" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=15;" vertex="1" parent="1">
                     <mxGeometry x="100" y="180" width="190" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="137" value="Messung am 10.09.2025" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="610" width="330" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="138" value="t(0min) &amp;lt; t &amp;lt; t(10min)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="640" width="140" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="139" value="U = 60V | PHI = 0° | I(sek) = 0,25A | f = 50Hz" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="670" width="330" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="140" value="t(10min) &amp;lt; t &amp;lt; t(15min)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="700" width="140" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="141" value="U = 65V | PHI = 0° | I(sek) = 0,5A | f = 50Hz" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="730" width="330" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="142" value="t(15min) &amp;lt; t &amp;lt; t(20min)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="755" width="140" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="143" value="U = 70V | PHI = 0° | I(sek) = 0,75A | f = 50Hz" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="785" width="330" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="144" value="t(20min) &amp;lt; t &amp;lt; t(22min)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="810" width="140" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="145" value="U = 80V | PHI = 20° | I(sek) = 0,75A | f = 50Hz" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="840" width="330" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="146" value="&lt;font style=&quot;font-size: 15px;&quot;&gt;Ziel des Testaufbautes&lt;/font&gt;" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="1320" width="330" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="147" value="&lt;ul&gt;&lt;li&gt;Messwerte sammeln für GridVis&lt;/li&gt;&lt;li&gt;Das parallele Einlesen mehrerer Messgeräte&lt;/li&gt;&lt;li&gt;Graph erstellen&lt;/li&gt;&lt;li&gt;Einfachen Beispiel Simulieren&lt;/li&gt;&lt;/ul&gt;" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="1350" width="330" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="148" value="13:08 - 13:45" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="1465" width="330" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="149" value="t(22min) &amp;lt; t &amp;lt; t(24min)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="870" width="140" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="150" value="U = 80V | PHI = 40° | I(sek) = 0,75A | f = 50Hz" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="900" width="330" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="151" value="t(24min) &amp;lt; t &amp;lt; t(26min)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="930" width="140" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="152" value="U = 80V | PHI = 60° | I(sek) = 0,75A | f = 50Hz" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="960" width="330" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="153" value="t(26min) &amp;lt; t &amp;lt; t(28min)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="995" width="140" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="154" value="U = 80V | PHI = 80° | I(sek) = 0,75A | f = 50Hz" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="1025" width="330" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="155" value="t(28min) &amp;lt; t &amp;lt; t(30min)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="1055" width="140" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="156" value="U = 80V | PHI = 100° | I(sek) = 0,75A | f = 50Hz" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="1085" width="330" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="157" value="t(30min) &amp;lt; t &amp;lt; t(32min)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="1115" width="140" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="158" value="U = 80V | PHI = 120° | I(sek) = 0,75A | f = 50Hz" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="1145" width="330" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="159" value="t(30min) &amp;lt; t &amp;lt; t(32min)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="1175" width="140" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="160" value="U = 80V | PHI = 180° | I(sek) = 0,75A | f = 50Hz" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                    <mxGeometry x="30" y="1205" width="330" height="30" as="geometry"/>
                 </mxCell>
             </root>
         </mxGraphModel>
