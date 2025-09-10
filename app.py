@@ -94,14 +94,14 @@ def inject_now():
 def index():
     return render_template('index.html')
 
-@app.route('/view_drawing/<string:filename>')
-def view_drawing(filename):
+@app.route('/Messung_Ablauf/<string:filename>')
+def Messung_Ablauf(filename):
     try:
         filepath = os.path.join(basedir, 'visuals', filename)
         with open(filepath, 'r', encoding='utf-8') as f: xml_content = f.read()
         config = { "xml": xml_content, "background": "#ffffff", "toolbar": "top", "lightbox": False, "transparent": False }
         diagram_data = json.dumps(config)
-        return render_template('view_drawing.html', diagram_data=diagram_data, drawing_name=filename)
+        return render_template('Messung_Ablauf.html', diagram_data=diagram_data, drawing_name=filename)
     except FileNotFoundError:
         flash(f"Zeichnung '{filename}' nicht gefunden.", "error")
         return redirect(url_for('index'))
@@ -109,6 +109,22 @@ def view_drawing(filename):
         flash(f"Fehler beim Laden der Zeichnung: {e}", "error")
         return redirect(url_for('index'))
 
+
+@app.route('/Messung_1_Aufbau/<string:filename>')
+def Messung_1_Aufbau(filename):
+    try:
+        filepath = os.path.join(basedir, 'visuals', filename)
+        with open(filepath, 'r', encoding='utf-8') as f: xml_content = f.read()
+        config = { "xml": xml_content, "background": "#ffffff", "toolbar": "top", "lightbox": False, "transparent": False }
+        diagram_data = json.dumps(config)
+        return render_template('Messung_1_Aufbau.html', diagram_data=diagram_data, drawing_name=filename)
+    except FileNotFoundError:
+        flash(f"Zeichnung '{filename}' nicht gefunden.", "error")
+        return redirect(url_for('index'))
+    except Exception as e:
+        flash(f"Fehler beim Laden der Zeichnung: {e}", "error")
+        return redirect(url_for('index'))
+    
 @app.route('/begriffsfinder', methods=['GET', 'POST'])
 def begriffsfinder():
     search_term, result = "", ""
