@@ -144,26 +144,46 @@
         {% endfor %}
     </div>
 
-    <div class="form-container export-section">
-        <h2>Export & Auswertung</h2>
-        <form action="{{ url_for('download_filtered_pdf') }}" method="POST" style="margin-bottom: 2rem;">
-            <div class="form-group">
-                <label for="bearbeiter_filter">Bearbeitername:</label>
-                <input type="text" id="bearbeiter_filter" name="bearbeiter" placeholder="Ihr Name" required>
-            </div>
-            <button type="submit" class="btn">Alle Abstimmungen getroffen (Lösung filtern)</button>
-        </form>
-        <hr>
-        <h3 style="margin-top: 2rem;">Fragebogen als PDF exportieren</h3>
-        <form action="{{ url_for('export_questions_pdf') }}" method="POST">
-            <div class="form-group">
-                <label for="bearbeiter_export">Bearbeitername:</label>
-                <input type="text" id="bearbeiter_export" name="bearbeiter" placeholder="Ihr Name" required>
-            </div>
-            <button type="submit" class="btn">Fragebogen exportieren</button>
-        </form>
-    </div>
+   <div class="form-container export-section">
+    <h2>Export & Auswertung</h2>
 
+    <h3 style="margin-top: 2rem;">Option 1: Manuelle Eingabe</h3>
+    <p>Nachdem Sie alle Antworten oben manuell ausgefüllt und gespeichert haben, können Sie hier die Lösungs-PDF erstellen.</p>
+    <form action="{{ url_for('download_filtered_pdf') }}" method="POST" style="margin-bottom: 2rem;">
+        <div class="form-group">
+            <label for="bearbeiter_filter">Bearbeitername:</label>
+            <input type="text" id="bearbeiter_filter" name="bearbeiter" placeholder="Ihr Name" required>
+        </div>
+        <button type="submit" class="btn">Lösung basierend auf manuellen Eingaben filtern</button>
+    </form>
+    
+    <hr>
+
+    <h3 style="margin-top: 2rem;">Option 2: PDF-Import</h3>
+    <p>Laden Sie hier eine ausgefüllte PDF-Datei hoch, um die Antworten zu übernehmen und direkt die gefilterte Lösungs-PDF zu erhalten.</p>
+    <form action="{{ url_for('import_answers_pdf') }}" method="POST" enctype="multipart/form-data">
+        <div class="form-group">
+            <label for="bearbeiter_import">Bearbeitername:</label>
+            <input type="text" id="bearbeiter_import" name="bearbeiter_import" placeholder="Ihr Name" required>
+        </div>
+        <div class="form-group">
+            <label for="answers_pdf">Ausgefüllte PDF-Datei:</label>
+            <input type="file" id="answers_pdf" name="answers_pdf" accept=".pdf" required>
+        </div>
+        <button type="submit" class="btn">Antworten importieren & Lösung erstellen</button>
+    </form>
+
+    <hr>
+
+    <h3 style="margin-top: 2rem;">Leeren Fragebogen als PDF exportieren</h3>
+    <form action="{{ url_for('export_questions_pdf') }}" method="POST">
+        <div class="form-group">
+            <label for="bearbeiter_export">Bearbeitername:</label>
+            <input type="text" id="bearbeiter_export" name="bearbeiter" placeholder="Ihr Name" required>
+        </div>
+        <button type="submit" class="btn">Ausfüllbaren Fragebogen exportieren</button>
+    </form>
+</div>
     <script>
         function openTab(evt, tabName) {
             var i, tabcontent, tablinks;

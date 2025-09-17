@@ -385,15 +385,11 @@ def update_index(question_id):
     return jsonify({'success': False, 'message': 'Frage nicht gefunden.'})
 
 
-@app.route('/download_filtered_pdf', methods=['POST'])
-def download_filtered_pdf():
+def generate_filtered_solutions_pdf(bearbeiter):
     try:
-        bearbeiter = request.form.get('bearbeiter', 'N/A')
         df_excel = pd.read_excel('Daten.xlsx', sheet_name='Fragestellungen', header=None)
         project_config = session.get('project_config', {})
         
-        # --- KORREKTUR 1: Zuordnung der Konfig-Schlüssel zu Kategorien ---
-        # Dies verhindert Fehler wie 'num_abgangs' vs. 'num_abgaenge'
         category_config_keys = {
             'Trafo': 'num_trafos',
             'Einspeisung': 'num_einspeisungen',
@@ -409,46 +405,46 @@ def download_filtered_pdf():
         pdf = FPDF(orientation='P', unit='mm', format='A4')
         create_pdf_cover(pdf, bearbeiter, "Gefilterte Lösungen")
         found_any_solution = False
+        
+        # NEU: Eine Liste für Diagnose-Nachrichten
+        diagnostics = []
 
         for category, config in category_configs.items():
-            # Zuverlässige Abfrage der Komponentenanzahl
             config_key = category_config_keys.get(category)
             num_components = project_config.get(config_key, 0)
 
             if num_components == 0:
                 continue
             
-            # Lese die Header und Daten für die gesamte Kategorie
             header_series = df_excel.iloc[config['header_row']]
             df_category_data = df_excel.iloc[config['data_start_row']:config['data_end_row']].copy()
-            
-            # --- KORREKTUR 2: Bereinige die Spaltennamen in Pandas ---
-            # Entfernt unsichtbare Leerzeichen und stellt sicher, dass alles als Text behandelt wird
             df_category_data.columns = [str(h).strip() if pd.notna(h) else '' for h in header_series]
 
             for i in range(1, num_components + 1):
+                component_name = f"{category} {i}"
                 df_to_filter = df_category_data.copy()
+                
                 answers = QuestionAnswer.query.filter(
                     QuestionAnswer.category == category, QuestionAnswer.category_index == i,
                     QuestionAnswer.answer.isnot(None), QuestionAnswer.answer != '',
                     QuestionAnswer.answer != 'nicht Relevant'
                 ).all()
 
+                # Diagnose-Schritt 1: Prüfen, ob Antworten in der DB gefunden wurden
                 if not answers:
+                    diagnostics.append(f"Für '{component_name}' wurden keine relevanten Antworten in der Datenbank gefunden. Wird übersprungen.")
                     continue
                 
-                # Wende alle gegebenen Antworten als Filter an
+                diagnostics.append(f"Für '{component_name}' wurden {len(answers)} Antworten gefunden. Beginne Filterung.")
+
                 for answer_obj in answers:
-                    # --- KORREKTUR 3: Bereinige auch den Fragetext aus der DB ---
                     question_text = answer_obj.question.strip()
                     user_answer = answer_obj.answer.strip()
                     
                     if question_text not in df_to_filter.columns:
-                        # Diese Frage existiert nicht als Spalte in der Excel -> überspringen
-                        print(f"WARNUNG: Die Frage '{question_text}' wurde nicht in den Excel-Spalten für '{category}' gefunden.")
                         continue
                     
-                    # Deine spezielle Filterlogik bleibt hier unverändert
+                    # ... (Ihre bestehende Filterlogik bleibt hier unverändert)
                     if question_text == "Spannungsversorgung des Messgerätes?":
                         if not (match := re.search(r'(\d+)\s*v?\s*(ac|dc|ac/dc)?', user_answer.lower())): continue
                         user_voltage, user_type = int(match.group(1)), (match.group(2) or "ac/dc").upper()
@@ -456,7 +452,6 @@ def download_filtered_pdf():
                             if pd.isna(cell): return False
                             return any(s['min_v'] <= user_voltage <= s['max_v'] and user_type in s['type'] for s in parse_voltage_string(str(cell)))
                         condition = (df_to_filter[question_text].isna()) | (df_to_filter[question_text].apply(check_voltage))
-                    
                     elif question_text == "Bis zur wie vielten Oberschwingung soll gemessen werden?":
                         if not (nums := re.findall(r'(\d+)', user_answer)): continue
                         user_max_h = max(int(n) for n in nums)
@@ -464,8 +459,7 @@ def download_filtered_pdf():
                             if pd.isna(cell) or not (cell_nums := re.findall(r'(\d+)', str(cell))): return False
                             return max(int(n) for n in cell_nums) >= user_max_h
                         condition = (df_to_filter[question_text].isna()) | (df_to_filter[question_text].apply(check_harmonic))
-                    
-                    else: # Standard-Filter für alle anderen Fragen
+                    else:
                         condition = (df_to_filter[question_text].isna()) | (df_to_filter[question_text].astype(str).str.contains(user_answer, na=False, case=False, regex=False))
                     
                     df_to_filter = df_to_filter[condition]
@@ -473,12 +467,15 @@ def download_filtered_pdf():
                 final_solutions = df_to_filter.iloc[:, config['solution_start_col']:]
                 final_solutions = final_solutions.dropna(how='all', axis=1).dropna(how='all', axis=0)
                 
+                # Diagnose-Schritt 2: Prüfen, ob nach dem Filtern noch Lösungen übrig sind
                 if not final_solutions.empty:
+                    diagnostics.append(f"Erfolgreich! Für '{component_name}' wurden {len(final_solutions)} Lösungen gefunden und zur PDF hinzugefügt.")
                     found_any_solution = True
                     pdf.add_page()
                     pdf.set_font("Arial", 'B', 14)
-                    pdf.cell(0, 10, txt=f"Lösungen für {category} {i}", ln=True, align='L')
+                    pdf.cell(0, 10, txt=f"Lösungen für {component_name}", ln=True, align='L')
                     
+                    # ... (Rest der PDF-Tabellenerstellung bleibt unverändert)
                     pdf.set_font("Arial", 'B', 10)
                     col_widths = [(pdf.w - 20) / len(final_solutions.columns)] * len(final_solutions.columns)
                     for j, col_header in enumerate(final_solutions.columns):
@@ -489,22 +486,35 @@ def download_filtered_pdf():
                         for j, item in enumerate(row):
                             pdf.cell(col_widths[j], 10, str(item) if pd.notna(item) else "", 1, 0, 'L')
                         pdf.ln()
+                else:
+                    diagnostics.append(f"Keine passenden Lösungen für '{component_name}' nach der Filterung gefunden.")
+
+        # Zeige alle Diagnose-Nachrichten als eine einzige Flash-Nachricht an
+        flash("Diagnose-Bericht: \n" + "\n".join(diagnostics), "info")
 
         if not found_any_solution:
-            flash("Keine relevanten Antworten gegeben oder keine passenden Lösungen gefunden.", "warning")
+            flash("Insgesamt wurden keine passenden Lösungen für die aktuelle Konfiguration gefunden.", "warning")
             return redirect(url_for('fragen', **session.get('project_config', {})))
 
         pdf_output = pdf.output(dest='S').encode('latin1')
         return send_file(BytesIO(pdf_output), as_attachment=True, download_name='Gefilterte_Loesungen.pdf', mimetype='application/pdf')
+    
     except Exception as e:
-        # Fügen Sie diese Zeile hinzu, um den Fehler im Terminal zu sehen
         print(f"Ein Fehler ist aufgetreten: {e}") 
         flash(f"Ein Fehler ist beim Erstellen des Lösungs-PDFs aufgetreten: {e}", "error")
         return redirect(url_for('fragen', **session.get('project_config', {})))
 
 
+@app.route('/download_filtered_pdf', methods=['POST'])
+def download_filtered_pdf():
+    bearbeiter = request.form.get('bearbeiter', 'N/A')
+    # Ruft die neue Hilfsfunktion auf
+    return generate_filtered_solutions_pdf(bearbeiter)
+
+
 @app.route('/import_answers_pdf', methods=['POST'])
 def import_answers_pdf():
+    bearbeiter = request.form.get('bearbeiter_import', 'N/A')
     if 'answers_pdf' not in request.files:
         flash('Keine Datei hochgeladen.', 'error')
         return redirect(url_for('fragen'))
@@ -529,7 +539,11 @@ def import_answers_pdf():
                 question_id = int(field_name.split('_')[1])
                 answer_value = field_data.value
                 
-                # Finde die Frage in der DB und update die Antwort
+                # NEUE REGEL: Behandelt "Nein" (unabhängig von Groß-/Kleinschreibung)
+                # als "nicht Relevant".
+                if answer_value.strip().lower() == 'nein':
+                    answer_value = 'nicht Relevant'
+                
                 question_entry = QuestionAnswer.query.get(question_id)
                 if question_entry:
                     question_entry.answer = answer_value
@@ -538,15 +552,12 @@ def import_answers_pdf():
         db.session.commit()
         flash(f'{answers_updated} Antworten wurden erfolgreich aus der PDF importiert!', 'success')
         
-        # Optional: Lösen Sie direkt die Erstellung des Lösungs-PDFs aus
-        # Hierfür müssten Sie die Logik von download_filtered_pdf wiederverwenden oder aufrufen
-        # Vorerst leiten wir einfach zur Fragenseite zurück
-        return redirect(url_for('fragen', **session.get('project_config', {})))
+        return generate_filtered_solutions_pdf(bearbeiter)
         
     except Exception as e:
         db.session.rollback()
         flash(f'Ein Fehler ist beim Einlesen der PDF aufgetreten: {e}', 'error')
-        print(e) # Für Debugging
+        print(e)
         return redirect(url_for('fragen', **session.get('project_config', {})))
     
 @app.route('/export_questions_pdf', methods=['POST'])
