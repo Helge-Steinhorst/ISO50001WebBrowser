@@ -218,3 +218,27 @@ footer {
     border-top: 1px solid var(--border-color);
     color: #888;
 }
+
+
+/* --- Dashboard Image Styles --- */
+.dashboard-image-container {
+    background-color: var(--secondary-bg-color);
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin-bottom: 2rem;
+    border: 1px solid var(--border-color);
+    text-align: center; /* Zentriert das Bild, falls es schmaler als der Container ist */
+}
+
+.dashboard-image-container h2 {
+    margin-top: 0;
+    text-align: left; /* Überschrift linksbündig lassen */
+}
+
+.dashboard-image-container img {
+    max-width: 100%;       /* Das Bild wird nie breiter als sein Container */
+    max-height: 800px;     /* HIER können Sie die Höhe anpassen */
+    height: auto;          /* Stellt das korrekte Seitenverhältnis sicher */
+    border-radius: 1px;
+    border: 1px solid var(--border-color);
+}

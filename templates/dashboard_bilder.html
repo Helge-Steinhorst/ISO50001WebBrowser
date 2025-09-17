@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+
+{# Setzt den Titel, der im Browser-Tab angezeigt wird #}
+{% block title %}Dashboard Bilder{% endblock %}
+
+{# Hier beginnt der Hauptinhalt der Seite #}
+{% block content %}
+<div class="main-content">
+    <h1 class="mb-4">Dashboard Bilder</h1>
+    <div class="dashboard-image-container">
+        <h2>Start der Messung</h2>
+        <p><small style="color: #888;">Aufnahme vom 15. September 2025</small></p>
+        <img src="{{ url_for('static', filename='img/Test_15-09-2025.png') }}" alt="Grafik der gesamten Messung">
+    </div>
+    <div class="dashboard-image-container">
+        <h2>Messung im eingeschwungenen Zustand</h2>
+        <p><small style="color: #888;">Aufnahme vom 15. September 2025</small></p>
+        <img src="{{ url_for('static', filename='img/Test_15-09-2025-Eingeschwungen.png') }}" alt="Grafik der Messung im eingeschwungenen Zustand">
+    </div>
+
+    
+</div>
+{% endblock %}

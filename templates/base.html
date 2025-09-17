@@ -11,7 +11,7 @@
         <div class="navbar-container">
             <a href="{{ url_for('index') }}" class="navbar-logo">
                 <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Logo">
-                <span>ISO50001 Check</span>
+                
             </a>
             <ul class="nav-menu">
                 <li class="nav-item">
@@ -31,6 +31,8 @@
                     <div class="dropdown-content">
                         <a href="{{ url_for('Messung_Ablauf', filename='Messungen.drawio') }}">Messung ablauf</a>
                         <a href="{{ url_for('Messung_1_Aufbau', filename='Testmessung1.drawio') }}">Erster Testaufbau</a>
+                        <a href="{{ url_for('Ablauf_Kunde', filename='Ablauf_Kunde.drawio') }}">Ablauf des Programms</a>
+                        <a href="{{ url_for('dashboard_bilder')}}">Dashboard Bilder</a>
                     </div>
 
                 </li>

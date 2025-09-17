@@ -94,6 +94,24 @@ def inject_now():
 def index():
     return render_template('index.html')
 
+
+@app.route('/Ablauf_Kunde/<string:filename>')
+def Ablauf_Kunde(filename):
+    try:
+        filepath = os.path.join(basedir, 'visuals', filename)
+        with open(filepath, 'r', encoding='utf-8') as f: xml_content = f.read()
+        config = { "xml": xml_content, "background": "#ffffff", "toolbar": "top", "lightbox": False, "transparent": False }
+        diagram_data = json.dumps(config)
+        return render_template('Ablauf_Kunde.html', diagram_data=diagram_data, drawing_name=filename)
+    except FileNotFoundError:
+        flash(f"Zeichnung '{filename}' nicht gefunden.", "error")
+        return redirect(url_for('index'))
+    except Exception as e:
+        flash(f"Fehler beim Laden der Zeichnung: {e}", "error")
+        return redirect(url_for('index'))
+
+
+
 @app.route('/Messung_Ablauf/<string:filename>')
 def Messung_Ablauf(filename):
     try:
@@ -125,6 +143,14 @@ def Messung_1_Aufbau(filename):
         flash(f"Fehler beim Laden der Zeichnung: {e}", "error")
         return redirect(url_for('index'))
     
+
+
+@app.route('/dashboard-bilder')
+def dashboard_bilder():
+    """Diese Funktion rendert die Seite mit den Dashboard-Bildern."""
+    return render_template('dashboard_bilder.html')
+
+
 @app.route('/begriffsfinder', methods=['GET', 'POST'])
 def begriffsfinder():
     search_term, result = "", ""
@@ -343,51 +369,47 @@ def update_index(question_id):
     return jsonify({'success': False, 'message': 'Frage nicht gefunden.'})
 
 @app.route('/download_filtered_pdf', methods=['POST'])
+@app.route('/download_filtered_pdf', methods=['POST'])
 def download_filtered_pdf():
     try:
         bearbeiter = request.form.get('bearbeiter', 'N/A')
         df_excel = pd.read_excel('Daten.xlsx', sheet_name='Fragestellungen', header=None)
         project_config = session.get('project_config', {})
         
-        # --- ANGEPASST AN IHRE EXAKTEN ZEILEN- UND SPALTENANGABEN ---
-        category_configs = {
-            'Trafo': {
-                'header_row': 14,  # Excel Zeile 15
-                'data_start_row': 15, # Excel Zeile 16
-                'data_end_row': 38,   # Ende des Trafo-Datenblocks (Annahme, falls es keinen nächsten Block gäbe)
-                'solution_start_col': 26 # Spalte AA
-            },
-            'Einspeisung': {
-                'header_row': 39,  # Excel Zeile 40
-                'data_start_row': 40, # Excel Zeile 41
-                'data_end_row': 64,   # Excel Zeile 64
-                'solution_start_col': 26 # Spalte AA
-            },
-            'Abgang': {
-                'header_row': 77,  # Excel Zeile 78
-                'data_start_row': 78, # Excel Zeile 79
-                'data_end_row': 101,  # Excel Zeile 101
-                'solution_start_col': 26 # Spalte AA
-            }
+        # --- KORREKTUR 1: Zuordnung der Konfig-Schlüssel zu Kategorien ---
+        # Dies verhindert Fehler wie 'num_abgangs' vs. 'num_abgaenge'
+        category_config_keys = {
+            'Trafo': 'num_trafos',
+            'Einspeisung': 'num_einspeisungen',
+            'Abgang': 'num_abgaenge'
         }
 
-        pdf = FPDF(orientation='P', unit='mm', format='A4') # Querformat
+        category_configs = {
+            'Trafo': {'header_row': 14, 'data_start_row': 15, 'data_end_row': 38, 'solution_start_col': 26},
+            'Einspeisung': {'header_row': 40, 'data_start_row': 41, 'data_end_row': 64, 'solution_start_col': 26},
+            'Abgang': {'header_row': 77, 'data_start_row': 78, 'data_end_row': 101, 'solution_start_col': 26}
+        }
+
+        pdf = FPDF(orientation='P', unit='mm', format='A4')
         create_pdf_cover(pdf, bearbeiter, "Gefilterte Lösungen")
         found_any_solution = False
 
         for category, config in category_configs.items():
-            num_components = project_config.get(f"num_{category.lower()}s", 0)
-            if category == 'Einspeisung': # Sonderfall Plural
-                 num_components = project_config.get('num_einspeisungen', 0)
+            # Zuverlässige Abfrage der Komponentenanzahl
+            config_key = category_config_keys.get(category)
+            num_components = project_config.get(config_key, 0)
 
-            if num_components == 0: continue
+            if num_components == 0:
+                continue
             
             # Lese die Header und Daten für die gesamte Kategorie
-            header = df_excel.iloc[config['header_row']]
+            header_series = df_excel.iloc[config['header_row']]
             df_category_data = df_excel.iloc[config['data_start_row']:config['data_end_row']].copy()
-            df_category_data.columns = header
+            
+            # --- KORREKTUR 2: Bereinige die Spaltennamen in Pandas ---
+            # Entfernt unsichtbare Leerzeichen und stellt sicher, dass alles als Text behandelt wird
+            df_category_data.columns = [str(h).strip() if pd.notna(h) else '' for h in header_series]
 
-            # Iteriere durch jede Instanz (z.B. Trafo 1, Trafo 2, ...)
             for i in range(1, num_components + 1):
                 df_to_filter = df_category_data.copy()
                 answers = QuestionAnswer.query.filter(
@@ -396,16 +418,21 @@ def download_filtered_pdf():
                     QuestionAnswer.answer != 'nicht Relevant'
                 ).all()
 
-                if not answers: continue
-                found_any_solution = True
-
+                if not answers:
+                    continue
+                
                 # Wende alle gegebenen Antworten als Filter an
                 for answer_obj in answers:
+                    # --- KORREKTUR 3: Bereinige auch den Fragetext aus der DB ---
                     question_text = answer_obj.question.strip()
                     user_answer = answer_obj.answer.strip()
                     
-                    if question_text not in df_to_filter.columns: continue
+                    if question_text not in df_to_filter.columns:
+                        # Diese Frage existiert nicht als Spalte in der Excel -> überspringen
+                        print(f"WARNUNG: Die Frage '{question_text}' wurde nicht in den Excel-Spalten für '{category}' gefunden.")
+                        continue
                     
+                    # Deine spezielle Filterlogik bleibt hier unverändert
                     if question_text == "Spannungsversorgung des Messgerätes?":
                         if not (match := re.search(r'(\d+)\s*v?\s*(ac|dc|ac/dc)?', user_answer.lower())): continue
                         user_voltage, user_type = int(match.group(1)), (match.group(2) or "ac/dc").upper()
@@ -427,11 +454,11 @@ def download_filtered_pdf():
                     
                     df_to_filter = df_to_filter[condition]
                 
-                # Extrahiere die Lösungsspalten ab Spalte AA (Index 26)
                 final_solutions = df_to_filter.iloc[:, config['solution_start_col']:]
                 final_solutions = final_solutions.dropna(how='all', axis=1).dropna(how='all', axis=0)
                 
                 if not final_solutions.empty:
+                    found_any_solution = True
                     pdf.add_page()
                     pdf.set_font("Arial", 'B', 14)
                     pdf.cell(0, 10, txt=f"Lösungen für {category} {i}", ln=True, align='L')
@@ -454,9 +481,10 @@ def download_filtered_pdf():
         pdf_output = pdf.output(dest='S').encode('latin1')
         return send_file(BytesIO(pdf_output), as_attachment=True, download_name='Gefilterte_Loesungen.pdf', mimetype='application/pdf')
     except Exception as e:
+        # Fügen Sie diese Zeile hinzu, um den Fehler im Terminal zu sehen
+        print(f"Ein Fehler ist aufgetreten: {e}") 
         flash(f"Ein Fehler ist beim Erstellen des Lösungs-PDFs aufgetreten: {e}", "error")
         return redirect(url_for('fragen', **session.get('project_config', {})))
-
 
 @app.route('/export_questions_pdf', methods=['POST'])
 def export_questions_pdf():
@@ -597,9 +625,21 @@ class QuestionPDF(FPDF):
                 self.set_font('Arial', '', 9)
 
                 for q in questions:
+                    # --- NEUER CODE-BLOCK START ---
+                    # Hier prüfen wir die Antwortmöglichkeiten und fügen bei Bedarf "Nein" hinzu.
+                    display_options = q.options
+                    # Erstelle eine saubere Liste der Optionen (kleingeschrieben, ohne Leerzeichen)
+                    options_list = [opt.strip().lower() for opt in display_options.split(',')]
+                    
+                    # Wenn 'ja' eine Option ist, aber 'nein' noch nicht, fügen wir 'Nein' hinzu.
+                    if 'ja' in options_list and 'nein' not in options_list:
+                        display_options += ", Nein"
+                    # --- NEUER CODE-BLOCK ENDE ---
+
                     line_height = 7
+                    # Wir verwenden jetzt die Variable 'display_options' anstelle von 'q.options'
                     question_lines = self.multi_cell(col_widths["frage"], line_height, q.question, 0, 'L', split_only=True)
-                    options_lines = self.multi_cell(col_widths["optionen"], line_height, q.options.replace(',', ', '), 0, 'L', split_only=True)
+                    options_lines = self.multi_cell(col_widths["optionen"], line_height, display_options.replace(',', ', '), 0, 'L', split_only=True)
                     num_lines = max(len(question_lines), len(options_lines), 1)
                     row_height = num_lines * line_height
 
@@ -624,11 +664,12 @@ class QuestionPDF(FPDF):
                         Frage_Hoehe = line_height
                         Moeglichkeiten_Hoehe = line_height
                         Antwort_Hoehe = line_height
-                      
+                        
                     x_start, y_start = self.get_x(), self.get_y()
                     self.multi_cell(col_widths["frage"], Frage_Hoehe, q.question, 1, 'L')
                     self.set_xy(x_start + col_widths["frage"], y_start)
-                    self.multi_cell(col_widths["optionen"], Moeglichkeiten_Hoehe, q.options.replace(',', ', '), 1, 'L')
+                    # Auch hier 'display_options' verwenden
+                    self.multi_cell(col_widths["optionen"], Moeglichkeiten_Hoehe, display_options.replace(',', ', '), 1, 'L')
                     self.set_xy(x_start + col_widths["frage"] + col_widths["optionen"], y_start)
                     self.cell(col_widths["antwort"], Antwort_Hoehe, "", 1, 1, 'L')
                 
