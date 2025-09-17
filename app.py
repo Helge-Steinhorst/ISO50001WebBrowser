@@ -13,6 +13,22 @@ matplotlib.use('Agg') # <-- WICHTIG: Diese Zeile muss VOR dem Import von pyplot 
 import matplotlib.pyplot as plt
 import re
 
+
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+from PyPDF2 import PdfReader
+import io
+from reportlab.platypus import Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.utils import ImageReader
+from PIL import Image # Wichtig: Fügen Sie diesen Import hinzu
+
+
 # --- App Konfiguration ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'dein_super_geheimer_schluessel_12345'
@@ -368,7 +384,7 @@ def update_index(question_id):
         return jsonify({'success': False, 'message': str(e)})
     return jsonify({'success': False, 'message': 'Frage nicht gefunden.'})
 
-@app.route('/download_filtered_pdf', methods=['POST'])
+
 @app.route('/download_filtered_pdf', methods=['POST'])
 def download_filtered_pdf():
     try:
@@ -486,29 +502,183 @@ def download_filtered_pdf():
         flash(f"Ein Fehler ist beim Erstellen des Lösungs-PDFs aufgetreten: {e}", "error")
         return redirect(url_for('fragen', **session.get('project_config', {})))
 
+
+@app.route('/import_answers_pdf', methods=['POST'])
+def import_answers_pdf():
+    if 'answers_pdf' not in request.files:
+        flash('Keine Datei hochgeladen.', 'error')
+        return redirect(url_for('fragen'))
+        
+    file = request.files['answers_pdf']
+
+    if file.filename == '' or not file.filename.lower().endswith('.pdf'):
+        flash('Bitte wählen Sie eine gültige PDF-Datei aus.', 'error')
+        return redirect(url_for('fragen'))
+
+    try:
+        reader = PdfReader(file.stream)
+        fields = reader.get_fields()
+        
+        if not fields:
+            flash('Die hochgeladene PDF enthält keine ausfüllbaren Felder.', 'warning')
+            return redirect(url_for('fragen'))
+            
+        answers_updated = 0
+        for field_name, field_data in fields.items():
+            if field_name.startswith('question_') and field_data.value:
+                question_id = int(field_name.split('_')[1])
+                answer_value = field_data.value
+                
+                # Finde die Frage in der DB und update die Antwort
+                question_entry = QuestionAnswer.query.get(question_id)
+                if question_entry:
+                    question_entry.answer = answer_value
+                    answers_updated += 1
+        
+        db.session.commit()
+        flash(f'{answers_updated} Antworten wurden erfolgreich aus der PDF importiert!', 'success')
+        
+        # Optional: Lösen Sie direkt die Erstellung des Lösungs-PDFs aus
+        # Hierfür müssten Sie die Logik von download_filtered_pdf wiederverwenden oder aufrufen
+        # Vorerst leiten wir einfach zur Fragenseite zurück
+        return redirect(url_for('fragen', **session.get('project_config', {})))
+        
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Ein Fehler ist beim Einlesen der PDF aufgetreten: {e}', 'error')
+        print(e) # Für Debugging
+        return redirect(url_for('fragen', **session.get('project_config', {})))
+    
 @app.route('/export_questions_pdf', methods=['POST'])
 def export_questions_pdf():
     try:
         bearbeiter = request.form.get('bearbeiter', 'N/A')
         project_config = session.get('project_config', {})
+        
+        # 1. Fragen aus der Datenbank abrufen
         conditions = [QuestionAnswer.category == 'Allgemein']
         if (n := project_config.get('num_trafos', 0)) > 0: conditions.append((QuestionAnswer.category == 'Trafo') & (QuestionAnswer.category_index <= n))
         if (n := project_config.get('num_einspeisungen', 0)) > 0: conditions.append((QuestionAnswer.category == 'Einspeisung') & (QuestionAnswer.category_index <= n))
         if (n := project_config.get('num_abgaenge', 0)) > 0: conditions.append((QuestionAnswer.category == 'Abgang') & (QuestionAnswer.category_index <= n))
         
         fragen_db = QuestionAnswer.query.filter(or_(*conditions)).order_by(QuestionAnswer.category, QuestionAnswer.category_index, QuestionAnswer.sort_index).all()
+        
         if not fragen_db:
             flash("Keine Fragen zum Exportieren für die aktuelle Konfiguration vorhanden.", "info")
             return redirect(url_for('fragen', **session.get('project_config', {})))
             
-        pdf = QuestionPDF(orientation='P', unit='mm', format='A4')
-        pdf.create_cover(bearbeiter)
-        pdf.create_question_tables(fragen_db)
-        pdf_output = pdf.output(dest='S').encode('latin1')
-        return send_file(BytesIO(pdf_output), as_attachment=True, download_name='Fragebogen.pdf', mimetype='application/pdf')
+        # 2. PDF-Erstellung vorbereiten
+        buffer = io.BytesIO()
+        c = canvas.Canvas(buffer, pagesize=A4)
+        width, height = A4
+        c.acroForm
+
+        styles = getSampleStyleSheet()
+        style = styles["Normal"]
+        style.alignment = TA_LEFT
+        style.leading = 14
+
+        # --- Deckblatt zeichnen (JETZT MIT LOGO) ---
+        logo_path = os.path.join(basedir, 'static', 'img', 'logo.png')
+        if os.path.exists(logo_path):
+            # Logo zentriert oben platzieren (Breite 110 Punkte, Höhe wird automatisch angepasst)
+            c.drawImage(logo_path, x=(width/2 - 63*mm), y=(height - 150*mm), width=355, preserveAspectRatio=True, mask='auto')
+
+        c.setFont("Helvetica-Bold", 24)
+        c.drawCentredString(width / 2, height - 150*mm, "Fragebogen zur ISO50001") # Text nach unten verschoben
+        c.setFont("Helvetica", 12)
+        c.drawCentredString(width / 2, height - 180*mm, f"Bearbeiter: {bearbeiter}") # Text nach unten verschoben
+        c.drawCentredString(width / 2, height - 200*mm, f"Datum: {date.today().strftime('%d.%m.%Y')}") # Text nach unten verschoben
+        c.showPage()
+
+        # 3. Layout-Variablen und Header-Funktion
+        x_margin = 18 * mm
+        col_widths = [80 * mm, 55 * mm, 45 * mm]
+        
+        def draw_header(y_start):
+            c.setFont("Helvetica-Bold", 10)
+            header_height = 8 * mm
+            c.drawString(x_margin + 2*mm, y_start - (header_height / 1.5), "Frage")
+            c.drawString(x_margin + col_widths[0] + 2*mm, y_start - (header_height / 1.5), "Antwortmöglichkeiten")
+            c.drawString(x_margin + col_widths[0] + col_widths[1] + 2*mm, y_start - (header_height / 1.5), "Antwort")
+            c.grid([x_margin, x_margin + col_widths[0], x_margin + col_widths[0] + col_widths[1], x_margin + sum(col_widths)], [y_start, y_start - header_height])
+            return y_start - header_height
+
+        # 4. Fragen-Tabellen zeichnen
+        from itertools import groupby
+        category_order = ['Allgemein', 'Trafo', 'Einspeisung', 'Abgang']
+        keyfunc = lambda q: (q.category, q.category_index)
+        grouped_data = {k: list(v) for k, v in groupby(fragen_db, key=keyfunc)}
+
+        y_cursor = height - 25 * mm
+
+        for category in category_order:
+            instanzen = sorted([k[1] for k in grouped_data.keys() if k[0] == category])
+            if not instanzen: continue
+
+            for i in instanzen:
+                questions = grouped_data.get((category, i), [])
+                if not questions: continue
+
+                if y_cursor < 100 * mm:
+                    c.showPage()
+                    y_cursor = height - 25 * mm
+
+                title = category if category == 'Allgemein' else f'{category} {i}'
+                c.setFont("Helvetica-Bold", 14)
+                c.drawString(x_margin, y_cursor, title)
+                y_cursor -= 10*mm
+                
+                y_cursor = draw_header(y_cursor)
+
+                for q in questions:
+                    display_options = q.options.replace(',', ', ')
+                    if 'ja' in display_options.lower() and 'nein' not in display_options.lower():
+                        display_options += ", Nein"
+                    
+                    question_p = Paragraph(q.question, style)
+                    options_p = Paragraph(display_options, style)
+
+                    q_height = question_p.wrap(col_widths[0] - 4*mm, height)[1]
+                    o_height = options_p.wrap(col_widths[1] - 4*mm, height)[1]
+                    
+                    row_height = max(10 * mm, q_height + 4*mm, o_height + 4*mm)
+
+                    if y_cursor - row_height < 40 * mm:
+                        c.showPage()
+                        y_cursor = height - 25 * mm
+                        y_cursor = draw_header(y_cursor)
+
+                    question_p.drawOn(c, x_margin + 2*mm, y_cursor - row_height + 2*mm)
+                    options_p.drawOn(c, x_margin + col_widths[0] + 2*mm, y_cursor - row_height + 2*mm)
+                    
+                    c.acroForm.textfield(
+                        name=f'question_{q.id}',
+                        x=x_margin + col_widths[0] + col_widths[1] + 2*mm,
+                        y=y_cursor - row_height + 2*mm,
+                        width=col_widths[2] - 4*mm,
+                        height=row_height - 4*mm,
+                        borderStyle='solid', borderWidth=1, borderColor=colors.black,
+                    )
+
+                    c.grid([x_margin, x_margin + col_widths[0], x_margin + col_widths[0] + col_widths[1], x_margin + sum(col_widths)], [y_cursor, y_cursor - row_height])
+                    y_cursor -= row_height
+                
+                y_cursor -= 10 * mm
+
+        # 5. PDF speichern und senden
+        c.save()
+        pdf_output = buffer.getvalue()
+        buffer.close()
+        
+        return send_file(io.BytesIO(pdf_output), as_attachment=True, download_name='Fragebogen_ausfuellbar.pdf', mimetype='application/pdf')
+
     except Exception as e:
-        flash(f"Fehler beim Erstellen des Fragebogen-PDFs: {e}", "error")
+        flash(f"Ein Fehler ist beim Erstellen des Fragebogen-PDFs aufgetreten: {e}", "error")
+        import traceback
+        traceback.print_exc()
         return redirect(url_for('fragen', **session.get('project_config', {})))
+
 
 def generate_category_chart(entries):
     """ Erstellt ein Kuchendiagramm mit transparentem Hintergrund und speichert es als PNG."""
@@ -563,119 +733,7 @@ def generate_category_chart(entries):
     except Exception as e:
         print(f"Fehler beim Erstellen der Grafik: {e}")
 
-class QuestionPDF(FPDF):
-    def header(self):
-        if self.page_no() > 1:
-            self.set_font('Arial', 'B', 16)
-            title = 'Fragebogen zur ISO50001'
-            title_w = self.get_string_width(title) + 6
-            self.set_x((self.w - title_w) / 2)
-            self.cell(title_w, 10, title, 0, 0, 'C')
-            if os.path.exists(logo_path := os.path.join(basedir, 'static', 'img', 'logo.png')):
-                self.image(logo_path, x=self.w - self.r_margin - 50, y=5, w=50)
-            self.ln(20)
-            
-    def footer(self):
-        if self.page_no() > 1:
-            self.set_y(-15)
-            self.set_font('Arial', 'I', 8)
-            self.cell(0, 10, f'Seite {self.page_no() - 1}', 0, 0, 'C')
-            
-    def create_cover(self, bearbeiter_name):
-        create_pdf_cover(self, bearbeiter_name, 'Fragebogen zur ISO50001')
-        
-    def create_question_tables(self, data):
-        from itertools import groupby
-        
-        category_order = ['Allgemein', 'Trafo', 'Einspeisung', 'Abgang']
-        keyfunc = lambda q: (q.category, q.category_index)
-        grouped_data = {k: list(v) for k, v in groupby(data, key=keyfunc)}
-        
-        self.add_page()
-        col_widths = {"frage": 95, "optionen": 50, "antwort": 45}
-        
-        for category in category_order:
-            instanzen = sorted([k[1] for k in grouped_data.keys() if k[0] == category])
-            if not instanzen: continue
 
-            if self.get_y() + 40 > self.h - self.b_margin: self.add_page()
-            
-            for i in instanzen:
-                questions = grouped_data.get((category, i), [])
-                if not questions: continue
-                
-                # KORRIGIERTE PRÜFUNG FÜR SEITENUMBRUCH
-                if self.get_y() + 60 > self.h - self.b_margin: 
-                    self.add_page()
-
-                # Titel nur einmal pro Kategorie/Instanz
-                if category == 'Allgemein' and i == 1:
-                    self.set_font('Arial', 'B', 14)
-                    self.cell(0, 10, f'{category}', 0, 1, 'L')
-                    self.ln(3)
-                elif category != 'Allgemein':
-                    self.set_font('Arial', 'B', 14)
-                    self.cell(0, 10, f'{category} {i}', 0, 1, 'L')
-                    self.ln(3)
-
-                self.set_font('Arial', 'B', 10)
-                self.cell(col_widths["frage"], 10, 'Frage', 1, 0, 'C')
-                self.cell(col_widths["optionen"], 10, 'Antwortmöglichkeiten', 1, 0, 'C')
-                self.cell(col_widths["antwort"], 10, 'Antwort', 1, 1, 'C')
-                self.set_font('Arial', '', 9)
-
-                for q in questions:
-                    # --- NEUER CODE-BLOCK START ---
-                    # Hier prüfen wir die Antwortmöglichkeiten und fügen bei Bedarf "Nein" hinzu.
-                    display_options = q.options
-                    # Erstelle eine saubere Liste der Optionen (kleingeschrieben, ohne Leerzeichen)
-                    options_list = [opt.strip().lower() for opt in display_options.split(',')]
-                    
-                    # Wenn 'ja' eine Option ist, aber 'nein' noch nicht, fügen wir 'Nein' hinzu.
-                    if 'ja' in options_list and 'nein' not in options_list:
-                        display_options += ", Nein"
-                    # --- NEUER CODE-BLOCK ENDE ---
-
-                    line_height = 7
-                    # Wir verwenden jetzt die Variable 'display_options' anstelle von 'q.options'
-                    question_lines = self.multi_cell(col_widths["frage"], line_height, q.question, 0, 'L', split_only=True)
-                    options_lines = self.multi_cell(col_widths["optionen"], line_height, display_options.replace(',', ', '), 0, 'L', split_only=True)
-                    num_lines = max(len(question_lines), len(options_lines), 1)
-                    row_height = num_lines * line_height
-
-                    if self.get_y() + row_height > self.h - self.b_margin:
-                        self.add_page()
-                        self.set_font('Arial', 'B', 10)
-                        self.cell(col_widths["frage"], 10, 'Frage', 1, 0, 'C')
-                        self.cell(col_widths["optionen"], 10, 'Antwortmöglichkeiten', 1, 0, 'C')
-                        self.cell(col_widths["antwort"], 10, 'Antwort', 1, 1, 'C')
-                        self.set_font('Arial', '', 9)
-
-
-                    if num_lines > 1 and len(options_lines) > len(question_lines):
-                        Frage_Hoehe = row_height
-                        Moeglichkeiten_Hoehe = line_height
-                        Antwort_Hoehe = row_height
-                    elif num_lines > 1 and len(question_lines) > len(options_lines):
-                        Frage_Hoehe = line_height
-                        Moeglichkeiten_Hoehe = row_height
-                        Antwort_Hoehe = row_height
-                    else:
-                        Frage_Hoehe = line_height
-                        Moeglichkeiten_Hoehe = line_height
-                        Antwort_Hoehe = line_height
-                        
-                    x_start, y_start = self.get_x(), self.get_y()
-                    self.multi_cell(col_widths["frage"], Frage_Hoehe, q.question, 1, 'L')
-                    self.set_xy(x_start + col_widths["frage"], y_start)
-                    # Auch hier 'display_options' verwenden
-                    self.multi_cell(col_widths["optionen"], Moeglichkeiten_Hoehe, display_options.replace(',', ', '), 1, 'L')
-                    self.set_xy(x_start + col_widths["frage"] + col_widths["optionen"], y_start)
-                    self.cell(col_widths["antwort"], Antwort_Hoehe, "", 1, 1, 'L')
-                
-                self.ln(5) # Abstand nach jeder Instanztabelle
-
-                
 # --- App Start ---
 if __name__ == '__main__':
     with app.app_context():

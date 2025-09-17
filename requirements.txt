@@ -1,4 +1,4 @@
-flask  
+flask
 flask_sqlalchemy
 pandas
 datetime
@@ -6,4 +6,6 @@ matplotlib
 fpdf
 openpyxl
 Pillow
-cairosvg # Neu hinzugefügt (optional für SVG-Rendering)
+cairosvg
+reportlab
+PyPDF2
