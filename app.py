@@ -83,6 +83,15 @@ class QuestionAnswer(db.Model):
     sasil_abgang_index = db.Column(db.Integer, nullable=True)
     __table_args__ = (db.UniqueConstraint('category', 'category_index', 'question', 'sasil_abgang_index', name='_category_question_uc'),)
 
+class ComponentName(db.Model):
+    __bind_key__ = 'fragen'
+    __tablename__ = 'component_name'
+    id = db.Column(db.Integer, primary_key=True)
+    category = db.Column(db.String(50), nullable=False)
+    category_index = db.Column(db.Integer, nullable=False)
+    name = db.Column(db.String(100), nullable=True)
+    __table_args__ = (db.UniqueConstraint('category', 'category_index', name='_category_index_uc'),)
+
 
 # --- Helper-Funktionen ---
 def parse_voltage_string(voltage_str):
@@ -169,7 +178,7 @@ def Messung_1_Aufbau(filename):
     except Exception as e:
         flash(f"Fehler beim Laden der Zeichnung: {e}", "error")
         return redirect(url_for('index'))
-    
+
 
 
 @app.route('/dashboard-bilder')
@@ -235,7 +244,7 @@ def dokumentation():
         return redirect(url_for('dokumentation'))
 
     entries = TimeEntry.query.order_by(TimeEntry.date.desc(), TimeEntry.start_time.desc()).all()
-    generate_category_chart(entries) 
+    generate_category_chart(entries)
     return render_template('dokumentation.html', entries=entries)
 
 @app.route('/delete/<int:entry_id>', methods=['POST'])
@@ -265,6 +274,7 @@ def generate_pdf():
     pass
 
 @app.route('/fragen', methods=['GET', 'POST'])
+@app.route('/fragen', methods=['GET', 'POST'])
 def fragen():
     if 'setup_submit' in request.args:
         try:
@@ -276,7 +286,7 @@ def fragen():
                 'sasil_abgaenge_counts': {}
             }
             old_config = session.get('project_config', {})
-            
+
             for i in range(1, new_config['num_sasil'] + 1):
                 new_config['sasil_abgaenge_counts'][str(i)] = 1
 
@@ -301,7 +311,7 @@ def fragen():
                                     options=master_q.options, sort_index=master_q.sort_index,
                                     sasil_abgang_index=sasil_abgang_index
                                 ))
-            
+
             session['project_config'] = new_config
             db.session.commit()
             flash('Projektkonfiguration wurde aktualisiert.', 'success')
@@ -324,14 +334,14 @@ def fragen():
                 category_index = int(request.form.get('category_index'))
                 sasil_abgang_index_str = request.form.get('sasil_abgang_index')
                 sasil_abgang_index = int(sasil_abgang_index_str) if sasil_abgang_index_str else None
-                
+
                 max_index = db.session.query(func.max(QuestionAnswer.sort_index)).filter_by(category=category).scalar() or 0
 
                 db.session.add(QuestionAnswer(
-                    question=request.form.get('new_question'), 
+                    question=request.form.get('new_question'),
                     options=request.form.get('options'),
-                    category=category, 
-                    category_index=category_index, 
+                    category=category,
+                    category_index=category_index,
                     sasil_abgang_index=sasil_abgang_index,
                     sort_index=max_index + 1
                 ))
@@ -341,10 +351,31 @@ def fragen():
             except Exception as e:
                 db.session.rollback()
                 flash(f'Fehler beim Erstellen der Frage: {e}', 'error')
+        elif 'save_component_name' in request.form:
+            try:
+                category = request.form.get('category')
+                category_index = int(request.form.get('category_index'))
+                name = request.form.get('component_name')
+                component = ComponentName.query.filter_by(category=category, category_index=category_index).first()
+                if component:
+                    component.name = name
+                else:
+                    component = ComponentName(category=category, category_index=category_index, name=name)
+                    db.session.add(component)
+                db.session.commit()
+                flash('Name erfolgreich gespeichert!', 'success')
+            except Exception as e:
+                db.session.rollback()
+                flash(f'Fehler beim Speichern des Namens: {e}', 'error')
         
-        anchor = f"{request.form.get('category')}-{request.form.get('category_index')}"
-        if request.form.get('sasil_abgang_index'):
-            anchor += f"-{request.form.get('sasil_abgang_index')}"
+        # Build the anchor to return to the correct tab
+        category = request.form.get('category')
+        category_index = request.form.get('category_index')
+        sasil_abgang_index = request.form.get('sasil_abgang_index')
+
+        sasil_abgang_index_str = sasil_abgang_index if sasil_abgang_index else 'None'
+        anchor = f"{category}-{category_index}-{sasil_abgang_index_str}"
+        
         return redirect(url_for('fragen', _anchor=anchor))
 
     project_config = session.get('project_config', {})
@@ -352,19 +383,21 @@ def fragen():
         project_config['sasil_abgaenge_counts'] = {}
 
     questions_db = QuestionAnswer.query.order_by(
-        QuestionAnswer.category, 
-        QuestionAnswer.category_index, 
+        QuestionAnswer.category,
+        QuestionAnswer.category_index,
         QuestionAnswer.sasil_abgang_index.nullslast(),
         QuestionAnswer.sort_index
     ).all()
-    
+
     grouped_questions = {}
     for q in questions_db:
         key = (q.category, q.category_index, q.sasil_abgang_index)
         if key not in grouped_questions: grouped_questions[key] = []
         grouped_questions[key].append(q)
-        
-    return render_template('fragen.html', project_config=project_config, grouped_questions=grouped_questions)
+
+    component_names = { (c.category, c.category_index): c.name for c in ComponentName.query.all() }
+
+    return render_template('fragen.html', project_config=project_config, grouped_questions=grouped_questions, component_names=component_names)
 
 
 @app.route('/synchronize_questions', methods=['POST'])
@@ -396,7 +429,7 @@ def synchronize_questions():
 
         for cat, num_key in target_categories_map.items():
             num_instances = project_config.get(num_key, 0)
-            
+
             for i in range(1, num_instances + 1):
                 if cat == 'SASIL':
                     sasil_counts = project_config.get('sasil_abgaenge_counts', {})
@@ -404,7 +437,7 @@ def synchronize_questions():
                     for j in range(1, num_abgaenge_sasil + 1):
                         if cat == source_category and i == source_category_index and j == source_sasil_abgang_index:
                             continue
-                        
+
                         for q in source_questions:
                             exists = QuestionAnswer.query.filter_by(
                                 category=cat, category_index=i, sasil_abgang_index=j, question=q.question
@@ -418,7 +451,7 @@ def synchronize_questions():
                 else:
                     if cat == source_category and i == source_category_index and source_sasil_abgang_index is None:
                         continue
-                        
+
                     for q in source_questions:
                         exists = QuestionAnswer.query.filter_by(
                             category=cat, category_index=i, sasil_abgang_index=None, question=q.question
@@ -439,7 +472,7 @@ def synchronize_questions():
     except Exception as e:
         db.session.rollback()
         flash(f'Fehler bei der Synchronisierung: {e}', 'error')
-    
+
     anchor = f"{request.form.get('source_category')}-{request.form.get('source_category_index')}"
     if request.form.get('source_sasil_abgang_index'):
         anchor += f"-{request.form.get('source_sasil_abgang_index')}"
@@ -477,7 +510,7 @@ def configure_sasil_abgaenge():
 
         project_config['sasil_abgaenge_counts'][sasil_index_str] = new_abgaenge_count
         session['project_config'] = project_config
-        
+
         db.session.commit()
         flash(f'Anzahl der Abgänge für SASIL {sasil_index} wurde auf {new_abgaenge_count} aktualisiert.', 'success')
 
@@ -497,12 +530,12 @@ def copy_sasil_answers():
         num_abgaenge_sasil = sasil_counts.get(str(sasil_index), 0)
 
         source_answers = QuestionAnswer.query.filter_by(category='SASIL', category_index=sasil_index, sasil_abgang_index=1).all()
-        
+
         for i in range(2, num_abgaenge_sasil + 1):
             for source_answer in source_answers:
                 target_question = QuestionAnswer.query.filter_by(
-                    category='SASIL', 
-                    category_index=sasil_index, 
+                    category='SASIL',
+                    category_index=sasil_index,
                     sasil_abgang_index=i,
                     question=source_answer.question
                 ).first()
@@ -514,7 +547,7 @@ def copy_sasil_answers():
     except Exception as e:
         db.session.rollback()
         flash(f'Fehler beim Kopieren der Antworten: {e}', 'error')
-    
+
     return redirect(url_for('fragen', _anchor=f"SASIL-{request.form.get('sasil_index')}-1", **session.get('project_config', {})))
 
 
@@ -579,7 +612,7 @@ def update_index(question_id):
 def generate_filtered_solutions_pdf(bearbeiter):
     try:
         project_config = session.get('project_config', {})
-        
+
         category_config_keys = {
             'Trafo': 'num_trafos',
             'Einspeisung': 'num_einspeisungen',
@@ -599,11 +632,12 @@ def generate_filtered_solutions_pdf(bearbeiter):
         found_any_solution = False
         diagnostics = []
         pdf.add_page()
+        component_names = { (c.category, c.category_index): c.name for c in ComponentName.query.all() }
 
         for category, config in category_configs.items():
             num_components = project_config.get(category_config_keys.get(category), 0)
             if num_components == 0: continue
-            
+
             try:
                 df_sheet = pd.read_excel('Daten.xlsx', sheet_name=config['sheet_name'], header=None)
             except ValueError:
@@ -617,16 +651,19 @@ def generate_filtered_solutions_pdf(bearbeiter):
             for i in range(1, num_components + 1):
                 sasil_counts = project_config.get('sasil_abgaenge_counts', {})
                 num_abgaenge_loop = sasil_counts.get(str(i), 1) if category == 'SASIL' else 1
-                
+
                 for j in range(1, num_abgaenge_loop + 1):
+                    component_name_from_db = component_names.get((category, i))
                     component_name = f"{category} {i}"
+                    if component_name_from_db:
+                        component_name += f" - {component_name_from_db}"
                     if category == 'SASIL': component_name += f" Abgang {j}"
-                    
+
                     df_to_filter = df_category_data.copy()
-                    
+
                     query_filter = {'category': category, 'category_index': i}
                     if category == 'SASIL': query_filter['sasil_abgang_index'] = j
-                    
+
                     answers = QuestionAnswer.query.filter_by(**query_filter).filter(
                         QuestionAnswer.answer.isnot(None),
                         QuestionAnswer.answer != '',
@@ -636,13 +673,13 @@ def generate_filtered_solutions_pdf(bearbeiter):
                     if not answers:
                         diagnostics.append(f"Für '{component_name}' wurden keine relevanten Antworten gefunden.")
                         continue
-                    
+
                     diagnostics.append(f"Für '{component_name}' wurden {len(answers)} Antworten gefunden. Beginne Filterung.")
-                    
+
                     for answer_obj in answers:
                         question_text, user_answer = answer_obj.question.strip(), answer_obj.answer.strip()
                         if question_text not in df_to_filter.columns: continue
-                        
+
                         if question_text == "Spannungsversorgung des Messgerätes?":
                             match = re.search(r'(\d+)\s*v?\s*(ac|dc|ac/dc)?', user_answer.lower())
                             if not match: continue
@@ -660,20 +697,20 @@ def generate_filtered_solutions_pdf(bearbeiter):
                             condition = df_to_filter[question_text].apply(check_harmonic) | df_to_filter[question_text].isna()
                         else:
                             condition = df_to_filter[question_text].astype(str).str.contains(user_answer, na=True, case=False, regex=False)
-                        
+
                         df_to_filter = df_to_filter[condition]
-                    
+
                     final_solutions = df_to_filter.iloc[:, config['solution_start_col']:].dropna(how='all', axis=1).dropna(how='all', axis=0)
-                    
+
                     if not final_solutions.empty:
                         diagnostics.append(f"Erfolgreich! Für '{component_name}' wurden {len(final_solutions)} Lösungen gefunden.")
                         found_any_solution = True
 
                         if pdf.get_y() + (len(final_solutions) + 2) * 10 > (pdf.h - pdf.b_margin): pdf.add_page()
-                        
+
                         pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, txt=f"Lösungen für {component_name}", ln=True, align='L')
                         pdf.set_font("Arial", 'B', 10)
-                        
+
                         col_widths = [(pdf.w - 20) / len(final_solutions.columns)] * len(final_solutions.columns)
                         for k, col_header in enumerate(final_solutions.columns): pdf.cell(col_widths[k], 10, str(col_header), 1, 0, 'C')
                         pdf.ln()
@@ -693,9 +730,9 @@ def generate_filtered_solutions_pdf(bearbeiter):
 
         pdf_output = pdf.output(dest='S').encode('latin1')
         return send_file(BytesIO(pdf_output), as_attachment=True, download_name='Gefilterte_Loesungen.pdf', mimetype='application/pdf')
-    
+
     except Exception as e:
-        print(f"Ein Fehler ist aufgetreten: {e}") 
+        print(f"Ein Fehler ist aufgetreten: {e}")
         flash(f"Ein Fehler ist beim Erstellen des Lösungs-PDFs aufgetreten: {e}", "error")
         return redirect(url_for('fragen', **session.get('project_config', {})))
 
@@ -712,7 +749,7 @@ def import_answers_pdf():
     if 'answers_pdf' not in request.files or not request.files['answers_pdf'].filename:
         flash('Keine Datei hochgeladen.', 'error')
         return redirect(url_for('fragen'))
-        
+
     file = request.files['answers_pdf']
     if not file.filename.lower().endswith('.pdf'):
         flash('Bitte wählen Sie eine gültige PDF-Datei aus.', 'error')
@@ -731,36 +768,36 @@ def import_answers_pdf():
         if project_config.get('num_abgaenge', 0) > 0: conditions_to_reset.append(QuestionAnswer.category == 'Abgang')
         if project_config.get('num_sasil', 0) > 0: conditions_to_reset.append(QuestionAnswer.category == 'SASIL')
         QuestionAnswer.query.filter(or_(*conditions_to_reset)).update({QuestionAnswer.answer: None}, synchronize_session=False)
-        
+
         reader = PdfReader(file.stream)
         if not (fields := reader.get_fields()):
             flash('Die PDF enthält keine ausfüllbaren Felder.', 'warning')
             return redirect(url_for('fragen'))
-            
+
         updated_count = 0
         sasil_to_sync = set() # Speichert die Indizes der zu synchronisierenden SASILs
 
         # 1. Durchlaufe alle Felder aus dem PDF
         for name, data in fields.items():
             value = data.get("/V")
-            
+
             # Reguläre Antworten importieren
             if name.startswith('question_') and value and str(value).strip():
                 # Der Name kann jetzt z.B. 'question_123_abgang_1' sein
                 parts = name.split('_')
                 q_id = int(parts[1])
-                
+
                 # Konvertiere den PDF-Wert in einen speicherbaren String
                 # /Off ist der Wert für eine nicht angekreuzte Box, /Yes (oder ein anderer Name) für eine angekreuzte
                 answer_val = str(value)
                 if answer_val.startswith('/'):
                     answer_val = answer_val[1:] # Entferne das '/'
-                
+
                 answer = 'nicht Relevant' if answer_val.lower() == 'nein' else answer_val
-                
+
                 QuestionAnswer.query.filter_by(id=q_id).update({QuestionAnswer.answer: answer})
                 updated_count += 1
-            
+
             # Prüfe, ob es sich um eine Sync-Checkbox handelt und ob sie angekreuzt ist
             if name.startswith('sync_sasil_') and value and value != '/Off':
                 sasil_index = int(name.split('_')[-1])
@@ -790,19 +827,19 @@ def import_answers_pdf():
                             sasil_abgang_index=i,
                             question=source_q.question # Finde die Frage mit demselben Text
                         ).update({QuestionAnswer.answer: source_q.answer})
-        
+
         db.session.commit()
         flash(f'{updated_count} Antworten wurden aus der PDF importiert!', 'success')
         # Nach dem Import direkt die Lösungs-PDF generieren und herunterladen
         return generate_filtered_solutions_pdf(bearbeiter)
-        
+
     except Exception as e:
         db.session.rollback()
         flash(f'Fehler beim Einlesen der PDF: {e}', 'error')
         import traceback
         traceback.print_exc()
         return redirect(url_for('fragen', **session.get('project_config', {})))
-    
+
 @app.route('/export_questions_pdf', methods=['POST'])
 def export_questions_pdf():
     # Wir benötigen diese speziellen Imports nicht mehr
@@ -812,23 +849,23 @@ def export_questions_pdf():
         bearbeiter = request.form.get('bearbeiter', 'N/A')
         kunde = request.form.get('kunde', 'N/A')
         project_config = session.get('project_config', {})
-        
+
         # ... (Datenbankabfrage bleibt unverändert) ...
         conditions = [QuestionAnswer.category == 'Allgemein']
         if (n := project_config.get('num_trafos', 0)) > 0: conditions.append(QuestionAnswer.category == 'Trafo')
         if (n := project_config.get('num_einspeisungen', 0)) > 0: conditions.append(QuestionAnswer.category == 'Einspeisung')
         if (n := project_config.get('num_abgaenge', 0)) > 0: conditions.append(QuestionAnswer.category == 'Abgang')
         if (n := project_config.get('num_sasil', 0)) > 0: conditions.append(QuestionAnswer.category == 'SASIL')
-        
+
         fragen_db = QuestionAnswer.query.filter(or_(*conditions)).order_by(
-            QuestionAnswer.category, QuestionAnswer.category_index, 
+            QuestionAnswer.category, QuestionAnswer.category_index,
             QuestionAnswer.sasil_abgang_index.nullslast(), QuestionAnswer.sort_index
         ).all()
-        
+
         if not fragen_db:
             flash("Keine Fragen zum Exportieren vorhanden.", "info")
             return redirect(url_for('fragen', **project_config))
-            
+
         buffer = io.BytesIO()
         c = canvas.Canvas(buffer, pagesize=A4)
         width, height = A4; c.acroForm; styles = getSampleStyleSheet()
@@ -862,7 +899,7 @@ def export_questions_pdf():
         from itertools import groupby
         keyfunc = lambda q: (q.category, q.category_index, q.sasil_abgang_index)
         grouped_data = {k: list(v) for k, v in groupby(fragen_db, key=keyfunc)}
-        
+        component_names = { (c.category, c.category_index): c.name for c in ComponentName.query.all() }
         # KEIN JAVASCRIPT MEHR NÖTIG
 
         draw_page_header(c, width, height)
@@ -873,14 +910,17 @@ def export_questions_pdf():
             if not questions: continue
             if y_cursor < 100 * mm:
                 c.showPage(); draw_page_header(c, width, height); y_cursor = height - 25*mm
+            component_name_from_db = component_names.get((category, cat_index))
             title = category if category == 'Allgemein' else f'{category} {cat_index}'
-            
+            if component_name_from_db:
+                title += f" - {component_name_from_db}"
+
             if category == 'SASIL' and abgang_index == 1:
                 c.setFont("Helvetica-Bold", 14); c.drawString(x_margin, y_cursor, title); y_cursor -= 8*mm
-                
+
                 sasil_counts = project_config.get('sasil_abgaenge_counts', {})
                 num_abgaenge = sasil_counts.get(str(cat_index), 1)
-                
+
                 if num_abgaenge > 1:
                     # Einfache Checkbox ohne Aktion. Der Name ist wichtig für den Import.
                     c.acroForm.checkbox(
@@ -889,14 +929,14 @@ def export_questions_pdf():
                         y=y_cursor - 4*mm,
                         tooltip="Wenn angekreuzt, werden die Antworten von Abgang 1 für alle anderen Abgänge dieses Feldes übernommen."
                     )
-                    
+
                     c.setFont("Helvetica", 10)
                     c.drawString(x_margin + 10*mm, y_cursor - 1.75*mm, "Alle Messinstrumente sind gleich zu wählen (Wenn diese Aktion ausgewählt ist bitte nur Abgang 1 ausfüllen)")
                     y_cursor -= 10*mm
 
             if category == 'SASIL':
                 title = f"Abgang {abgang_index}"
-            
+
             # ... (Rest der Funktion zum Zeichnen der Tabellen bleibt unverändert) ...
             c.setFont("Helvetica-Bold", 12); c.drawString(x_margin, y_cursor, title); y_cursor -= 10*mm
             y_cursor = draw_table_header(y_cursor)

@@ -98,6 +98,21 @@
                     <h2>{{ category_name }}{{ ' ' + i|string if category_name != 'Allgemein' }}</h2>
                     {% endif %}
 
+                    {# Show name form only once per component to avoid duplicate IDs #}
+                    {% if category_name != 'Allgemein' and (category_name != 'SASIL' or j == 1) %}
+                    <div class="component-name-form" style="margin-bottom: 2rem; border-bottom: 1px solid var(--border-color); padding-bottom: 1.5rem;">
+                        <form action="{{ url_for('fragen') }}" method="POST">
+                            <input type="hidden" name="category" value="{{ category_name }}">
+                            <input type="hidden" name="category_index" value="{{ i }}">
+                            <div class="form-group">
+                                <label for="component_name-{{ category_name }}-{{ i }}"><b>Bezeichnung für {{ category_name }} {{ i }}:</b></label>
+                                <input type="text" id="component_name-{{ category_name }}-{{ i }}" name="component_name" value="{{ component_names.get((category_name, i), '') }}" placeholder="z.B. Hauptverteilung 1" class="form-control" style="margin-top: 0.5rem;">
+                            </div>
+                            <button type="submit" name="save_component_name" value="1" class="btn btn-sm" style="margin-top: 1rem;">Namen speichern</button>
+                        </form>
+                    </div>
+                    {% endif %}
+
                     <div class="form-container">
                         <div class="form-header">
                             <h3>Neue Frage erstellen</h3>
@@ -312,6 +327,10 @@
             background-color: #17a2b8;
             color: white;
             border: none;
+        }
+        .form-inline {
+            display: flex;
+            align-items: center;
         }
 
     </style>
