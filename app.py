@@ -2,7 +2,7 @@ import os
 import json
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, session
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import or_, func
+from sqlalchemy import or_, func, and_, not_
 import pandas as pd
 from datetime import datetime, date, timedelta, time, timezone
 from io import BytesIO
@@ -26,6 +26,7 @@ from reportlab.platypus import Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase.pdfdoc import PDFName, PDFString, PDFArray, PDFDictionary
 from PIL import Image # Wichtig: Fügen Sie diesen Import hinzu
 
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -34,12 +35,18 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'dein_super_geheimer_schluessel_12345'
 basedir = os.path.abspath(os.path.dirname(__file__))
+# Standard-Datenbank für die Zeiterfassung
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'zeiterfassung.db')
+# Zusätzliche Datenbank für die Fragen
+app.config['SQLALCHEMY_BINDS'] = {
+    'fragen': 'sqlite:///' + os.path.join(basedir, 'fragen.db')
+}
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
 # --- Datenbankmodelle ---
 class TimeEntry(db.Model):
+    __tablename__ = 'time_entry'
     id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.Date, nullable=False, default=date.today)
     start_time = db.Column(db.Time, nullable=False)
@@ -64,6 +71,8 @@ class TimeEntry(db.Model):
         return f"{int(hours):02}:{int(minutes):02}"
 
 class QuestionAnswer(db.Model):
+    __bind_key__ = 'fragen'
+    __tablename__ = 'question_answer'
     id = db.Column(db.Integer, primary_key=True)
     category = db.Column(db.String(50), nullable=False)
     category_index = db.Column(db.Integer, nullable=False, default=1)
@@ -71,7 +80,8 @@ class QuestionAnswer(db.Model):
     options = db.Column(db.String(500), nullable=False)
     answer = db.Column(db.String(100), nullable=True)
     sort_index = db.Column(db.Integer, default=99)
-    __table_args__ = (db.UniqueConstraint('category', 'category_index', 'question', name='_category_question_uc'),)
+    sasil_abgang_index = db.Column(db.Integer, nullable=True)
+    __table_args__ = (db.UniqueConstraint('category', 'category_index', 'question', 'sasil_abgang_index', name='_category_question_uc'),)
 
 
 # --- Helper-Funktionen ---
@@ -208,7 +218,6 @@ def autocomplete_begriffe():
 @app.route('/dokumentation', methods=['GET', 'POST'])
 def dokumentation():
     if request.method == 'POST':
-        # Code zum Erstellen eines neuen Eintrags (bleibt unverändert)
         try:
             date_obj = datetime.strptime(request.form.get('date'), '%Y-%m-%d').date()
             start_time_obj = datetime.strptime(request.form.get('start_time'), '%H:%M').time()
@@ -225,14 +234,8 @@ def dokumentation():
             flash(f'Fehler beim Speichern: {e}', 'error')
         return redirect(url_for('dokumentation'))
 
-    # --- KORREKTUR: Grafik wird bei JEDEM Aufruf neu generiert ---
-    # 1. Alle Einträge aus der Datenbank laden
     entries = TimeEntry.query.order_by(TimeEntry.date.desc(), TimeEntry.start_time.desc()).all()
-    
-    # 2. Die Funktion aufrufen, die das Bild 'category_chart.png' erstellt
     generate_category_chart(entries) 
-    
-    # 3. Die Seite mit den Einträgen und der (jetzt aktuellen) Grafik anzeigen
     return render_template('dokumentation.html', entries=entries)
 
 @app.route('/delete/<int:entry_id>', methods=['POST'])
@@ -249,15 +252,12 @@ def delete_entry(entry_id):
 @app.route('/delete_all_entries', methods=['POST'])
 def delete_all_entries():
     try:
-        # Lösche alle Einträge aus der TimeEntry Tabelle
         db.session.query(TimeEntry).delete()
         db.session.commit()
         flash('Alle Zeiterfassungseinträge wurden gelöscht.', 'success')
     except Exception as e:
         db.session.rollback()
         flash(f'Fehler beim Löschen aller Einträge: {e}', 'error')
-    
-    # Leite zurück zur Dokumentationsseite (dies löst auch eine Neuberechnung der Grafik aus)
     return redirect(url_for('dokumentation'))
 
 @app.route('/generate_pdf')
@@ -272,20 +272,36 @@ def fragen():
                 'num_trafos': int(request.args.get('num_trafos', 0)),
                 'num_einspeisungen': int(request.args.get('num_einspeisungen', 0)),
                 'num_abgaenge': int(request.args.get('num_abgaenge', 0)),
+                'num_sasil': int(request.args.get('num_sasil', 0)),
+                'sasil_abgaenge_counts': {}
             }
             old_config = session.get('project_config', {})
-            for cat, key in [('Trafo', 'num_trafos'), ('Einspeisung', 'num_einspeisungen'), ('Abgang', 'num_abgaenge')]:
+            
+            for i in range(1, new_config['num_sasil'] + 1):
+                new_config['sasil_abgaenge_counts'][str(i)] = 1
+
+            categories_to_process = {
+                'Trafo': 'num_trafos',
+                'Einspeisung': 'num_einspeisungen',
+                'Abgang': 'num_abgaenge',
+                'SASIL': 'num_sasil'
+            }
+            for cat, key in categories_to_process.items():
                 old_count = old_config.get(key, 0)
                 new_count = new_config.get(key, 0)
+
                 if new_count > old_count:
-                    master_questions = QuestionAnswer.query.filter_by(category=cat, category_index=1).all()
+                    master_questions = QuestionAnswer.query.filter_by(category=cat, category_index=1, sasil_abgang_index=None if cat != 'SASIL' else 1).all()
                     for i in range(old_count + 1, new_count + 1):
                         for master_q in master_questions:
-                            if not QuestionAnswer.query.filter_by(category=cat, category_index=i, question=master_q.question).first():
+                            sasil_abgang_index = 1 if cat == 'SASIL' else None
+                            if not QuestionAnswer.query.filter_by(category=cat, category_index=i, sasil_abgang_index=sasil_abgang_index, question=master_q.question).first():
                                 db.session.add(QuestionAnswer(
                                     category=cat, category_index=i, question=master_q.question,
-                                    options=master_q.options, sort_index=master_q.sort_index
+                                    options=master_q.options, sort_index=master_q.sort_index,
+                                    sasil_abgang_index=sasil_abgang_index
                                 ))
+            
             session['project_config'] = new_config
             db.session.commit()
             flash('Projektkonfiguration wurde aktualisiert.', 'success')
@@ -304,36 +320,203 @@ def fragen():
             flash('Antworten erfolgreich gespeichert!', 'success')
         elif 'new_question' in request.form:
             try:
-                project_config = session.get('project_config', {})
-                num_instances = {
-                    'Trafo': project_config.get('num_trafos', 0),
-                    'Einspeisung': project_config.get('num_einspeisungen', 0),
-                    'Abgang': project_config.get('num_abgaenge', 0)
-                }.get(category, 1)
+                category = request.form.get('category')
+                category_index = int(request.form.get('category_index'))
+                sasil_abgang_index_str = request.form.get('sasil_abgang_index')
+                sasil_abgang_index = int(sasil_abgang_index_str) if sasil_abgang_index_str else None
                 
                 max_index = db.session.query(func.max(QuestionAnswer.sort_index)).filter_by(category=category).scalar() or 0
-                
-                for i in range(1, num_instances + 1):
-                    db.session.add(QuestionAnswer(
-                        question=request.form.get('new_question'), options=request.form.get('options'),
-                        category=category, category_index=i, sort_index=max_index + 1
-                    ))
+
+                db.session.add(QuestionAnswer(
+                    question=request.form.get('new_question'), 
+                    options=request.form.get('options'),
+                    category=category, 
+                    category_index=category_index, 
+                    sasil_abgang_index=sasil_abgang_index,
+                    sort_index=max_index + 1
+                ))
+
                 db.session.commit()
                 flash(f'Frage erfolgreich für "{category}" erstellt!', 'success')
             except Exception as e:
                 db.session.rollback()
                 flash(f'Fehler beim Erstellen der Frage: {e}', 'error')
-        return redirect(url_for('fragen', _anchor=f"{category}-1", **session.get('project_config', {})))
+        
+        anchor = f"{request.form.get('category')}-{request.form.get('category_index')}"
+        if request.form.get('sasil_abgang_index'):
+            anchor += f"-{request.form.get('sasil_abgang_index')}"
+        return redirect(url_for('fragen', _anchor=anchor))
 
     project_config = session.get('project_config', {})
-    questions_db = QuestionAnswer.query.order_by(QuestionAnswer.category, QuestionAnswer.category_index, QuestionAnswer.sort_index).all()
+    if 'sasil_abgaenge_counts' not in project_config:
+        project_config['sasil_abgaenge_counts'] = {}
+
+    questions_db = QuestionAnswer.query.order_by(
+        QuestionAnswer.category, 
+        QuestionAnswer.category_index, 
+        QuestionAnswer.sasil_abgang_index.nullslast(),
+        QuestionAnswer.sort_index
+    ).all()
+    
     grouped_questions = {}
     for q in questions_db:
-        key = (q.category, q.category_index)
+        key = (q.category, q.category_index, q.sasil_abgang_index)
         if key not in grouped_questions: grouped_questions[key] = []
         grouped_questions[key].append(q)
         
     return render_template('fragen.html', project_config=project_config, grouped_questions=grouped_questions)
+
+
+@app.route('/synchronize_questions', methods=['POST'])
+def synchronize_questions():
+    try:
+        source_category = request.form.get('source_category')
+        source_category_index = int(request.form.get('source_category_index'))
+        source_sasil_abgang_index_str = request.form.get('source_sasil_abgang_index')
+        source_sasil_abgang_index = int(source_sasil_abgang_index_str) if source_sasil_abgang_index_str else None
+
+        source_questions = QuestionAnswer.query.filter_by(
+            category=source_category,
+            category_index=source_category_index,
+            sasil_abgang_index=source_sasil_abgang_index
+        ).all()
+
+        if not source_questions:
+            flash('Keine Fragen in der Quelle zum Synchronisieren gefunden.', 'warning')
+            return redirect(url_for('fragen'))
+
+        project_config = session.get('project_config', {})
+        target_categories_map = {
+            'Trafo': 'num_trafos',
+            'Einspeisung': 'num_einspeisungen',
+            'Abgang': 'num_abgaenge',
+            'SASIL': 'num_sasil'
+        }
+        questions_added_count = 0
+
+        for cat, num_key in target_categories_map.items():
+            num_instances = project_config.get(num_key, 0)
+            
+            for i in range(1, num_instances + 1):
+                if cat == 'SASIL':
+                    sasil_counts = project_config.get('sasil_abgaenge_counts', {})
+                    num_abgaenge_sasil = sasil_counts.get(str(i), 1)
+                    for j in range(1, num_abgaenge_sasil + 1):
+                        if cat == source_category and i == source_category_index and j == source_sasil_abgang_index:
+                            continue
+                        
+                        for q in source_questions:
+                            exists = QuestionAnswer.query.filter_by(
+                                category=cat, category_index=i, sasil_abgang_index=j, question=q.question
+                            ).first()
+                            if not exists:
+                                db.session.add(QuestionAnswer(
+                                    category=cat, category_index=i, sasil_abgang_index=j,
+                                    question=q.question, options=q.options, sort_index=q.sort_index
+                                ))
+                                questions_added_count += 1
+                else:
+                    if cat == source_category and i == source_category_index and source_sasil_abgang_index is None:
+                        continue
+                        
+                    for q in source_questions:
+                        exists = QuestionAnswer.query.filter_by(
+                            category=cat, category_index=i, sasil_abgang_index=None, question=q.question
+                        ).first()
+                        if not exists:
+                            db.session.add(QuestionAnswer(
+                                category=cat, category_index=i,
+                                question=q.question, options=q.options, sort_index=q.sort_index
+                            ))
+                            questions_added_count += 1
+
+        db.session.commit()
+        if questions_added_count > 0:
+            flash(f'{questions_added_count} neue Fragen wurden zu den anderen Bereichen hinzugefügt.', 'success')
+        else:
+            flash('Alle Fragen waren bereits in den anderen Bereichen vorhanden. Nichts wurde hinzugefügt.', 'info')
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Fehler bei der Synchronisierung: {e}', 'error')
+    
+    anchor = f"{request.form.get('source_category')}-{request.form.get('source_category_index')}"
+    if request.form.get('source_sasil_abgang_index'):
+        anchor += f"-{request.form.get('source_sasil_abgang_index')}"
+    return redirect(url_for('fragen', _anchor=anchor))
+
+
+@app.route('/configure_sasil_abgaenge', methods=['POST'])
+def configure_sasil_abgaenge():
+    try:
+        sasil_index_str = request.form.get('sasil_index')
+        sasil_index = int(sasil_index_str)
+        new_abgaenge_count = int(request.form.get('num_abgaenge'))
+
+        project_config = session.get('project_config', {})
+        sasil_counts = project_config.get('sasil_abgaenge_counts', {})
+        old_abgaenge_count = sasil_counts.get(sasil_index_str, 0)
+
+        if new_abgaenge_count > old_abgaenge_count:
+            master_questions = QuestionAnswer.query.filter_by(category='SASIL', category_index=sasil_index, sasil_abgang_index=1).all()
+            for i in range(old_abgaenge_count + 1, new_abgaenge_count + 1):
+                for master_q in master_questions:
+                    if not QuestionAnswer.query.filter_by(category='SASIL', category_index=sasil_index, sasil_abgang_index=i, question=master_q.question).first():
+                        db.session.add(QuestionAnswer(
+                            category='SASIL', category_index=sasil_index, sasil_abgang_index=i,
+                            question=master_q.question, options=master_q.options, sort_index=master_q.sort_index
+                        ))
+        elif new_abgaenge_count < old_abgaenge_count:
+            QuestionAnswer.query.filter(
+                and_(
+                    QuestionAnswer.category == 'SASIL',
+                    QuestionAnswer.category_index == sasil_index,
+                    QuestionAnswer.sasil_abgang_index > new_abgaenge_count
+                )
+            ).delete(synchronize_session=False)
+
+        project_config['sasil_abgaenge_counts'][sasil_index_str] = new_abgaenge_count
+        session['project_config'] = project_config
+        
+        db.session.commit()
+        flash(f'Anzahl der Abgänge für SASIL {sasil_index} wurde auf {new_abgaenge_count} aktualisiert.', 'success')
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Fehler bei der Konfiguration der SASIL-Abgänge: {e}', 'error')
+
+    return redirect(url_for('fragen', _anchor=f"SASIL-{request.form.get('sasil_index')}-1", **session.get('project_config', {})))
+
+
+@app.route('/copy_sasil_answers', methods=['POST'])
+def copy_sasil_answers():
+    try:
+        sasil_index = int(request.form.get('sasil_index'))
+        project_config = session.get('project_config', {})
+        sasil_counts = project_config.get('sasil_abgaenge_counts', {})
+        num_abgaenge_sasil = sasil_counts.get(str(sasil_index), 0)
+
+        source_answers = QuestionAnswer.query.filter_by(category='SASIL', category_index=sasil_index, sasil_abgang_index=1).all()
+        
+        for i in range(2, num_abgaenge_sasil + 1):
+            for source_answer in source_answers:
+                target_question = QuestionAnswer.query.filter_by(
+                    category='SASIL', 
+                    category_index=sasil_index, 
+                    sasil_abgang_index=i,
+                    question=source_answer.question
+                ).first()
+                if target_question:
+                    target_question.answer = source_answer.answer
+
+        db.session.commit()
+        flash(f'Antworten für SASIL {sasil_index} wurden erfolgreich auf alle Abgänge übertragen.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Fehler beim Kopieren der Antworten: {e}', 'error')
+    
+    return redirect(url_for('fragen', _anchor=f"SASIL-{request.form.get('sasil_index')}-1", **session.get('project_config', {})))
+
 
 @app.route('/reset_fragen_config')
 def reset_fragen_config():
@@ -351,7 +534,10 @@ def delete_question(question_id):
     except Exception as e:
         db.session.rollback()
         flash(f'Fehler beim Löschen der Frage: {e}', 'error')
-    return redirect(url_for('fragen', _anchor=f"{q_ref.category}-1", **session.get('project_config', {})))
+    anchor = f"{q_ref.category}-{q_ref.category_index}"
+    if q_ref.category == 'SASIL':
+        anchor += f"-{q_ref.sasil_abgang_index}"
+    return redirect(url_for('fragen', _anchor=anchor, **session.get('project_config', {})))
 
 @app.route('/edit_question/<int:question_id>', methods=['POST'])
 def edit_question(question_id):
@@ -370,7 +556,11 @@ def edit_question(question_id):
     except Exception as e:
         db.session.rollback()
         flash(f"Fehler beim Aktualisieren der Frage: {e}", "error")
-    return redirect(url_for('fragen', _anchor=f"{q_ref.category}-{q_ref.category_index}", **session.get('project_config', {})))
+    anchor = f"{q_ref.category}-{q_ref.category_index}"
+    if q_ref.category == 'SASIL':
+        anchor += f"-{q_ref.sasil_abgang_index}"
+    return redirect(url_for('fragen', _anchor=anchor, **session.get('project_config', {})))
+
 
 @app.route('/update_index/<int:question_id>', methods=['POST'])
 def update_index(question_id):
@@ -388,146 +578,117 @@ def update_index(question_id):
 
 def generate_filtered_solutions_pdf(bearbeiter):
     try:
-        # GEÄNDERT: Die Excel-Datei wird jetzt innerhalb der Schleife gelesen.
-        # df_excel = pd.read_excel('Daten.xlsx', sheet_name='Fragestellungen', header=None) # ENTFERNT
         project_config = session.get('project_config', {})
         
         category_config_keys = {
             'Trafo': 'num_trafos',
             'Einspeisung': 'num_einspeisungen',
-            'Abgang': 'num_abgaenge'
+            'Abgang': 'num_abgaenge',
+            'SASIL': 'num_sasil',
         }
 
-        # GEÄNDERT: Diese Konfiguration spiegelt jetzt Ihre neue Excel-Struktur wider.
         category_configs = {
-            'Trafo': {
-                'sheet_name': 'Filter_Trafo',
-                'header_row': 14,           # Zeile 15 in Excel
-                'data_start_row': 15,       # Zeile 16 in Excel
-                'solution_start_col': 26    # Spalte AA in Excel
-            },
-            'Einspeisung': {
-                'sheet_name': 'Filter_Einspeisung',
-                'header_row': 14,
-                'data_start_row': 15,
-                'solution_start_col': 26
-            },
-            'Abgang': {
-                'sheet_name': 'Filter_Abgang',
-                'header_row': 14,
-                'data_start_row': 15,
-                'solution_start_col': 26
-            }
+            'Trafo': {'sheet_name': 'Filter_Trafo', 'header_row': 14, 'data_start_row': 15, 'solution_start_col': 26},
+            'Einspeisung': {'sheet_name': 'Filter_Einspeisung', 'header_row': 14, 'data_start_row': 15, 'solution_start_col': 26},
+            'Abgang': {'sheet_name': 'Filter_Abgang', 'header_row': 14, 'data_start_row': 15, 'solution_start_col': 26},
+            'SASIL': {'sheet_name': 'Filter_Sasil', 'header_row': 14, 'data_start_row': 15, 'solution_start_col': 26}
         }
 
         pdf = FPDF(orientation='P', unit='mm', format='A4')
         create_pdf_cover(pdf, bearbeiter, "Gefilterte Lösungen")
         found_any_solution = False
         diagnostics = []
-
         pdf.add_page()
 
         for category, config in category_configs.items():
-            config_key = category_config_keys.get(category)
-            num_components = project_config.get(config_key, 0)
-
-            if num_components == 0:
-                continue
+            num_components = project_config.get(category_config_keys.get(category), 0)
+            if num_components == 0: continue
             
-            # NEU: Lese die spezifische Tabelle für die aktuelle Kategorie
             try:
                 df_sheet = pd.read_excel('Daten.xlsx', sheet_name=config['sheet_name'], header=None)
             except ValueError:
                 diagnostics.append(f"FEHLER: Das Tabellenblatt '{config['sheet_name']}' wurde in 'Daten.xlsx' nicht gefunden.")
-                continue # Nächste Kategorie versuchen
+                continue
 
-            # GEÄNDERT: Nutze die neuen Konfigurationswerte
             header_series = df_sheet.iloc[config['header_row']]
-            # Lese von der Startzeile bis zum Ende der Tabelle
             df_category_data = df_sheet.iloc[config['data_start_row']:].copy()
             df_category_data.columns = [str(h).strip() if pd.notna(h) else '' for h in header_series]
 
             for i in range(1, num_components + 1):
-                component_name = f"{category} {i}"
-                df_to_filter = df_category_data.copy()
+                sasil_counts = project_config.get('sasil_abgaenge_counts', {})
+                num_abgaenge_loop = sasil_counts.get(str(i), 1) if category == 'SASIL' else 1
                 
-                # Die Logik zum Abrufen der Antworten aus der DB bleibt unverändert
-                answers = QuestionAnswer.query.filter(
-                    QuestionAnswer.category == category, QuestionAnswer.category_index == i,
-                    QuestionAnswer.answer.isnot(None), QuestionAnswer.answer != '',
-                    QuestionAnswer.answer != 'nicht Relevant'
-                ).all()
-
-                if not answers:
-                    diagnostics.append(f"Für '{component_name}' wurden keine relevanten Antworten in der Datenbank gefunden.")
-                    continue
-                
-                diagnostics.append(f"Für '{component_name}' wurden {len(answers)} Antworten gefunden. Beginne Filterung.")
-                
-                # Die eigentliche Filterlogik basierend auf den Antworten bleibt unverändert
-                for answer_obj in answers:
-                    question_text = answer_obj.question.strip()
-                    user_answer = answer_obj.answer.strip()
+                for j in range(1, num_abgaenge_loop + 1):
+                    component_name = f"{category} {i}"
+                    if category == 'SASIL': component_name += f" Abgang {j}"
                     
-                    if question_text not in df_to_filter.columns:
+                    df_to_filter = df_category_data.copy()
+                    
+                    query_filter = {'category': category, 'category_index': i}
+                    if category == 'SASIL': query_filter['sasil_abgang_index'] = j
+                    
+                    answers = QuestionAnswer.query.filter_by(**query_filter).filter(
+                        QuestionAnswer.answer.isnot(None),
+                        QuestionAnswer.answer != '',
+                        QuestionAnswer.answer != 'nicht Relevant'
+                    ).all()
+
+                    if not answers:
+                        diagnostics.append(f"Für '{component_name}' wurden keine relevanten Antworten gefunden.")
                         continue
                     
-                    if question_text == "Spannungsversorgung des Messgerätes?":
-                        if not (match := re.search(r'(\d+)\s*v?\s*(ac|dc|ac/dc)?', user_answer.lower())): continue
-                        user_voltage, user_type = int(match.group(1)), (match.group(2) or "ac/dc").upper()
-                        def check_voltage(cell):
-                            if pd.isna(cell): return False
-                            return any(s['min_v'] <= user_voltage <= s['max_v'] and user_type in s['type'] for s in parse_voltage_string(str(cell)))
-                        condition = (df_to_filter[question_text].isna()) | (df_to_filter[question_text].apply(check_voltage))
-                    elif question_text == "Bis zur wie vielten Oberschwingung soll gemessen werden?":
-                        if not (nums := re.findall(r'(\d+)', user_answer)): continue
-                        user_max_h = max(int(n) for n in nums)
-                        def check_harmonic(cell):
-                            if pd.isna(cell) or not (cell_nums := re.findall(r'(\d+)', str(cell))): return False
-                            return max(int(n) for n in cell_nums) >= user_max_h
-                        condition = (df_to_filter[question_text].isna()) | (df_to_filter[question_text].apply(check_harmonic))
-                    else:
-                        condition = (df_to_filter[question_text].isna()) | (df_to_filter[question_text].astype(str).str.contains(user_answer, na=False, case=False, regex=False))
+                    diagnostics.append(f"Für '{component_name}' wurden {len(answers)} Antworten gefunden. Beginne Filterung.")
                     
-                    df_to_filter = df_to_filter[condition]
-                
-                final_solutions = df_to_filter.iloc[:, config['solution_start_col']:]
-                final_solutions = final_solutions.dropna(how='all', axis=1).dropna(how='all', axis=0)
-                
-                # Die Logik zur PDF-Erstellung der Tabellen bleibt unverändert
-                if not final_solutions.empty:
-                    diagnostics.append(f"Erfolgreich! Für '{component_name}' wurden {len(final_solutions)} Lösungen gefunden.")
-                    found_any_solution = True
+                    for answer_obj in answers:
+                        question_text, user_answer = answer_obj.question.strip(), answer_obj.answer.strip()
+                        if question_text not in df_to_filter.columns: continue
+                        
+                        if question_text == "Spannungsversorgung des Messgerätes?":
+                            match = re.search(r'(\d+)\s*v?\s*(ac|dc|ac/dc)?', user_answer.lower())
+                            if not match: continue
+                            user_voltage, user_type = int(match.group(1)), (match.group(2) or "ac/dc").upper()
+                            def check_voltage(cell):
+                                return pd.notna(cell) and any(s['min_v'] <= user_voltage <= s['max_v'] and user_type in s['type'] for s in parse_voltage_string(str(cell)))
+                            condition = df_to_filter[question_text].apply(check_voltage) | df_to_filter[question_text].isna()
+                        elif question_text == "Bis zur wie vielten Oberschwingung soll gemessen werden?":
+                            nums = re.findall(r'(\d+)', user_answer)
+                            if not nums: continue
+                            user_max_h = max(int(n) for n in nums)
+                            def check_harmonic(cell):
+                                cell_nums = re.findall(r'(\d+)', str(cell))
+                                return pd.notna(cell) and cell_nums and max(int(n) for n in cell_nums) >= user_max_h
+                            condition = df_to_filter[question_text].apply(check_harmonic) | df_to_filter[question_text].isna()
+                        else:
+                            condition = df_to_filter[question_text].astype(str).str.contains(user_answer, na=True, case=False, regex=False)
+                        
+                        df_to_filter = df_to_filter[condition]
+                    
+                    final_solutions = df_to_filter.iloc[:, config['solution_start_col']:].dropna(how='all', axis=1).dropna(how='all', axis=0)
+                    
+                    if not final_solutions.empty:
+                        diagnostics.append(f"Erfolgreich! Für '{component_name}' wurden {len(final_solutions)} Lösungen gefunden.")
+                        found_any_solution = True
 
-                    TITLE_HEIGHT = 10
-                    ROW_HEIGHT = 10
-                    
-                    num_rows = 1 + len(final_solutions)
-                    required_height = TITLE_HEIGHT + (num_rows * ROW_HEIGHT)
-
-                    if pdf.get_y() + required_height > (pdf.h - pdf.b_margin):
-                        pdf.add_page()
-                    
-                    pdf.set_font("Arial", 'B', 14)
-                    pdf.cell(0, TITLE_HEIGHT, txt=f"Lösungen für {component_name}", ln=True, align='L')
-                    
-                    pdf.set_font("Arial", 'B', 10)
-                    col_widths = [(pdf.w - 20) / len(final_solutions.columns)] * len(final_solutions.columns)
-                    for j, col_header in enumerate(final_solutions.columns):
-                        pdf.cell(col_widths[j], ROW_HEIGHT, str(col_header), 1, 0, 'C')
-                    pdf.ln()
-                    pdf.set_font("Arial", '', 9)
-                    for _, row in final_solutions.iterrows():
-                        for j, item in enumerate(row):
-                            pdf.cell(col_widths[j], ROW_HEIGHT, str(item) if pd.notna(item) else "", 1, 0, 'L')
+                        if pdf.get_y() + (len(final_solutions) + 2) * 10 > (pdf.h - pdf.b_margin): pdf.add_page()
+                        
+                        pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, txt=f"Lösungen für {component_name}", ln=True, align='L')
+                        pdf.set_font("Arial", 'B', 10)
+                        
+                        col_widths = [(pdf.w - 20) / len(final_solutions.columns)] * len(final_solutions.columns)
+                        for k, col_header in enumerate(final_solutions.columns): pdf.cell(col_widths[k], 10, str(col_header), 1, 0, 'C')
                         pdf.ln()
-                else:
-                    diagnostics.append(f"Keine passenden Lösungen für '{component_name}' nach der Filterung gefunden.")
+
+                        pdf.set_font("Arial", '', 9)
+                        for _, row in final_solutions.iterrows():
+                            for k, item in enumerate(row): pdf.cell(col_widths[k], 10, str(item) if pd.notna(item) else "", 1, 0, 'L')
+                            pdf.ln()
+                    else:
+                        diagnostics.append(f"Keine passenden Lösungen für '{component_name}' gefunden.")
 
         flash("Diagnose-Bericht: \n" + "\n".join(diagnostics), "info")
 
         if not found_any_solution:
-            flash("Insgesamt wurden keine passenden Lösungen für die aktuelle Konfiguration gefunden.", "warning")
+            flash("Insgesamt wurden keine passenden Lösungen gefunden.", "warning")
             return redirect(url_for('fragen', **session.get('project_config', {})))
 
         pdf_output = pdf.output(dest='S').encode('latin1')
@@ -542,295 +703,257 @@ def generate_filtered_solutions_pdf(bearbeiter):
 @app.route('/download_filtered_pdf', methods=['POST'])
 def download_filtered_pdf():
     bearbeiter = request.form.get('bearbeiter', 'N/A')
-    # Ruft die neue Hilfsfunktion auf
     return generate_filtered_solutions_pdf(bearbeiter)
 
 
 @app.route('/import_answers_pdf', methods=['POST'])
 def import_answers_pdf():
     bearbeiter = request.form.get('bearbeiter_import', 'N/A')
-    if 'answers_pdf' not in request.files:
+    if 'answers_pdf' not in request.files or not request.files['answers_pdf'].filename:
         flash('Keine Datei hochgeladen.', 'error')
         return redirect(url_for('fragen'))
         
     file = request.files['answers_pdf']
-
-    if file.filename == '' or not file.filename.lower().endswith('.pdf'):
+    if not file.filename.lower().endswith('.pdf'):
         flash('Bitte wählen Sie eine gültige PDF-Datei aus.', 'error')
         return redirect(url_for('fragen'))
 
     try:
-        # --- START: NEUER BLOCK ZUR BEREINIGUNG DER DATENBANK ---
-
-        # 1. Projektkonfiguration aus der Session laden
         project_config = session.get('project_config', {})
         if not project_config:
-            flash('Keine Projektkonfiguration in der Session gefunden. Bitte das Projekt neu laden.', 'error')
-            return redirect(url_for('index'))
+            flash('Keine Projektkonfiguration in der Session gefunden.', 'error')
+            return redirect(url_for('fragen'))
 
-        # 2. Alle Fragen identifizieren, die zu diesem Projekt gehören
-        conditions_to_reset = []
-        if (n := project_config.get('num_trafos', 0)) > 0: conditions_to_reset.append((QuestionAnswer.category == 'Trafo') & (QuestionAnswer.category_index <= n))
-        if (n := project_config.get('num_einspeisungen', 0)) > 0: conditions_to_reset.append((QuestionAnswer.category == 'Einspeisung') & (QuestionAnswer.category_index <= n))
-        if (n := project_config.get('num_abgaenge', 0)) > 0: conditions_to_reset.append((QuestionAnswer.category == 'Abgang') & (QuestionAnswer.category_index <= n))
+        # Bestehende Antworten für das Projekt zurücksetzen
+        conditions_to_reset = [QuestionAnswer.category == 'Allgemein']
+        if project_config.get('num_trafos', 0) > 0: conditions_to_reset.append(QuestionAnswer.category == 'Trafo')
+        if project_config.get('num_einspeisungen', 0) > 0: conditions_to_reset.append(QuestionAnswer.category == 'Einspeisung')
+        if project_config.get('num_abgaenge', 0) > 0: conditions_to_reset.append(QuestionAnswer.category == 'Abgang')
+        if project_config.get('num_sasil', 0) > 0: conditions_to_reset.append(QuestionAnswer.category == 'SASIL')
+        QuestionAnswer.query.filter(or_(*conditions_to_reset)).update({QuestionAnswer.answer: None}, synchronize_session=False)
         
-        # Die 'Allgemein'-Fragen ebenfalls immer zurücksetzen
-        conditions_to_reset.append(QuestionAnswer.category == 'Allgemein')
-        
-        # 3. Alle Antworten für diese Fragen auf NULL setzen (effizientes Massen-Update)
-        if conditions_to_reset:
-            QuestionAnswer.query.filter(or_(*conditions_to_reset)).update({QuestionAnswer.answer: None}, synchronize_session=False)
-            
-        # --- ENDE: NEUER BLOCK ---
-
-        # Bestehender Code zum Einlesen der PDF
         reader = PdfReader(file.stream)
-        fields = reader.get_fields()
-        
-        if not fields:
-            flash('Die hochgeladene PDF enthält keine ausfüllbaren Felder.', 'warning')
+        if not (fields := reader.get_fields()):
+            flash('Die PDF enthält keine ausfüllbaren Felder.', 'warning')
             return redirect(url_for('fragen'))
             
-        answers_updated = 0
-        for field_name, field_data in fields.items():
-            field_value = field_data.get("/V")
-            if field_name.startswith('question_') and field_value and str(field_value).strip():
-                question_id = int(field_name.split('_')[1])
-                answer_value = str(field_value).strip()
+        updated_count = 0
+        sasil_to_sync = set() # Speichert die Indizes der zu synchronisierenden SASILs
+
+        # 1. Durchlaufe alle Felder aus dem PDF
+        for name, data in fields.items():
+            value = data.get("/V")
+            
+            # Reguläre Antworten importieren
+            if name.startswith('question_') and value and str(value).strip():
+                # Der Name kann jetzt z.B. 'question_123_abgang_1' sein
+                parts = name.split('_')
+                q_id = int(parts[1])
                 
-                if answer_value.lower() == 'nein':
-                    answer_value = 'nicht Relevant'
+                # Konvertiere den PDF-Wert in einen speicherbaren String
+                # /Off ist der Wert für eine nicht angekreuzte Box, /Yes (oder ein anderer Name) für eine angekreuzte
+                answer_val = str(value)
+                if answer_val.startswith('/'):
+                    answer_val = answer_val[1:] # Entferne das '/'
                 
-                # Hier wird nicht mehr .get() benötigt, da wir die Zeile direkt aktualisieren
-                question_entry = QuestionAnswer.query.filter_by(id=question_id).first()
-                if question_entry:
-                    question_entry.answer = answer_value
-                    answers_updated += 1
+                answer = 'nicht Relevant' if answer_val.lower() == 'nein' else answer_val
+                
+                QuestionAnswer.query.filter_by(id=q_id).update({QuestionAnswer.answer: answer})
+                updated_count += 1
+            
+            # Prüfe, ob es sich um eine Sync-Checkbox handelt und ob sie angekreuzt ist
+            if name.startswith('sync_sasil_') and value and value != '/Off':
+                sasil_index = int(name.split('_')[-1])
+                sasil_to_sync.add(sasil_index)
+
+        # 2. Führe die Synchronisierung für die markierten SASILs durch
+        if sasil_to_sync:
+            flash(f"Synchronisierung für SASIL-Felder {list(sasil_to_sync)} wird durchgeführt.", "info")
+            for sasil_index in sasil_to_sync:
+                # Hole alle Antworten von Abgang 1 für dieses SASIL-Feld
+                source_answers = QuestionAnswer.query.filter_by(
+                    category='SASIL',
+                    category_index=sasil_index,
+                    sasil_abgang_index=1
+                ).all()
+
+                sasil_counts = project_config.get('sasil_abgaenge_counts', {})
+                num_abgaenge = sasil_counts.get(str(sasil_index), 1)
+
+                # Kopiere die Antworten auf alle anderen Abgänge (2, 3, ...)
+                for i in range(2, num_abgaenge + 1):
+                    for source_q in source_answers:
+                        # Finde die Zielfrage und update sie
+                        QuestionAnswer.query.filter_by(
+                            category='SASIL',
+                            category_index=sasil_index,
+                            sasil_abgang_index=i,
+                            question=source_q.question # Finde die Frage mit demselben Text
+                        ).update({QuestionAnswer.answer: source_q.answer})
         
-        # Speichert sowohl das Zurücksetzen als auch die neuen Antworten
         db.session.commit()
-        
-        flash(f'{answers_updated} Antworten wurden erfolgreich aus der PDF importiert!', 'success')
-        
+        flash(f'{updated_count} Antworten wurden aus der PDF importiert!', 'success')
+        # Nach dem Import direkt die Lösungs-PDF generieren und herunterladen
         return generate_filtered_solutions_pdf(bearbeiter)
         
     except Exception as e:
         db.session.rollback()
-        flash(f'Ein Fehler ist beim Einlesen der PDF aufgetreten: {e}', 'error')
+        flash(f'Fehler beim Einlesen der PDF: {e}', 'error')
         import traceback
         traceback.print_exc()
         return redirect(url_for('fragen', **session.get('project_config', {})))
-
     
 @app.route('/export_questions_pdf', methods=['POST'])
 def export_questions_pdf():
+    # Wir benötigen diese speziellen Imports nicht mehr
+    # from reportlab.pdfbase.pdfdoc import PDFName, PDFString, PDFArray, PDFDictionary
+
     try:
         bearbeiter = request.form.get('bearbeiter', 'N/A')
         kunde = request.form.get('kunde', 'N/A')
         project_config = session.get('project_config', {})
         
-        # 1. Fragen aus der Datenbank abrufen
+        # ... (Datenbankabfrage bleibt unverändert) ...
         conditions = [QuestionAnswer.category == 'Allgemein']
-        if (n := project_config.get('num_trafos', 0)) > 0: conditions.append((QuestionAnswer.category == 'Trafo') & (QuestionAnswer.category_index <= n))
-        if (n := project_config.get('num_einspeisungen', 0)) > 0: conditions.append((QuestionAnswer.category == 'Einspeisung') & (QuestionAnswer.category_index <= n))
-        if (n := project_config.get('num_abgaenge', 0)) > 0: conditions.append((QuestionAnswer.category == 'Abgang') & (QuestionAnswer.category_index <= n))
+        if (n := project_config.get('num_trafos', 0)) > 0: conditions.append(QuestionAnswer.category == 'Trafo')
+        if (n := project_config.get('num_einspeisungen', 0)) > 0: conditions.append(QuestionAnswer.category == 'Einspeisung')
+        if (n := project_config.get('num_abgaenge', 0)) > 0: conditions.append(QuestionAnswer.category == 'Abgang')
+        if (n := project_config.get('num_sasil', 0)) > 0: conditions.append(QuestionAnswer.category == 'SASIL')
         
-        fragen_db = QuestionAnswer.query.filter(or_(*conditions)).order_by(QuestionAnswer.category, QuestionAnswer.category_index, QuestionAnswer.sort_index).all()
+        fragen_db = QuestionAnswer.query.filter(or_(*conditions)).order_by(
+            QuestionAnswer.category, QuestionAnswer.category_index, 
+            QuestionAnswer.sasil_abgang_index.nullslast(), QuestionAnswer.sort_index
+        ).all()
         
         if not fragen_db:
-            flash("Keine Fragen zum Exportieren für die aktuelle Konfiguration vorhanden.", "info")
-            return redirect(url_for('fragen', **session.get('project_config', {})))
+            flash("Keine Fragen zum Exportieren vorhanden.", "info")
+            return redirect(url_for('fragen', **project_config))
             
-        # 2. PDF-Erstellung vorbereiten
         buffer = io.BytesIO()
         c = canvas.Canvas(buffer, pagesize=A4)
-        width, height = A4
-        c.acroForm
+        width, height = A4; c.acroForm; styles = getSampleStyleSheet()
+        style = styles["Normal"]; style.alignment = TA_LEFT; style.leading = 14
 
-        styles = getSampleStyleSheet()
-        style = styles["Normal"]
-        style.alignment = TA_LEFT
-        style.leading = 14
-
-        # --- Deckblatt zeichnen ---
+        # ... (Deckblatt- und Header-Logik bleibt unverändert) ...
         logo_path = os.path.join(basedir, 'static', 'img', 'logo.png')
         if os.path.exists(logo_path):
             c.drawImage(logo_path, x=(width/2 - 63*mm), y=(height - 150*mm), width=355, preserveAspectRatio=True, mask='auto')
-
-        c.setFont("Helvetica-Bold", 24)
-        c.drawCentredString(width / 2, height - 150*mm, "Fragebogen zur ISO50001")
+        c.setFont("Helvetica-Bold", 24); c.drawCentredString(width/2, height - 150*mm, "Fragebogen zur ISO50001")
         c.setFont("Helvetica", 12)
-        c.drawCentredString(width / 2, height - 180*mm, f"Kunde: {kunde}")
-        c.drawCentredString(width / 2, height - 200*mm, f"Bearbeiter: {bearbeiter}")
-        c.drawCentredString(width / 2, height - 220*mm, f"Datum: {date.today().strftime('%d.%m.%Y')}")
+        c.drawCentredString(width/2, height - 180*mm, f"Kunde: {kunde}")
+        c.drawCentredString(width/2, height - 200*mm, f"Bearbeiter: {bearbeiter}")
+        c.drawCentredString(width/2, height - 220*mm, f"Datum: {date.today().strftime('%d.%m.%Y')}")
         c.showPage()
 
-        # 3. Layout-Variablen und Header-Funktionen
-        x_margin = 18 * mm
-        col_widths = [80 * mm, 55 * mm, 45 * mm]
-        
-        def draw_page_header(canvas, page_width, page_height):
-            """Zeichnet den Seitentitel und das Logo auf jeder neuen Seite."""
+        x_margin, col_widths = 18 * mm, [80 * mm, 55 * mm, 45 * mm]
+        def draw_page_header(canvas, pg_width, pg_height):
             canvas.setFont("Helvetica-Bold", 18)
-            canvas.drawString(page_width/2 - 30*mm, page_height - 15*mm, 'ISO50001 Fragebogen')
-            logo_path_header = os.path.join(basedir, 'static', 'img', 'logo.png')
-            
-            # GEÄNDERT: Bereinigt, um doppelte Zeichen-Aufrufe zu entfernen.
-            if os.path.exists(logo_path_header):
-                canvas.drawImage(logo_path_header, x=160*mm, y=207*mm, width=105, preserveAspectRatio=True, mask='auto')
+            canvas.drawString(pg_width/2 - 30*mm, pg_height - 15*mm, 'ISO50001 Fragebogen')
+            if os.path.exists(logo_path):
+                canvas.drawImage(logo_path, x=160*mm, y=207*mm, width=105, preserveAspectRatio=True, mask='auto')
+        def draw_table_header(y_pos):
+            c.setFont("Helvetica-Bold", 10); header_h = 8*mm
+            c.drawString(x_margin + 2*mm, y_pos - (header_h/1.5), "Frage")
+            c.drawString(x_margin + col_widths[0] + 2*mm, y_pos - (header_h/1.5), "Antwortmöglichkeiten")
+            c.drawString(x_margin + sum(col_widths[:2]) + 2*mm, y_pos - (header_h/1.5), "Antwort")
+            c.grid([x_margin, x_margin + col_widths[0], x_margin + sum(col_widths[:2]), x_margin + sum(col_widths)], [y_pos, y_pos - header_h])
+            return y_pos - header_h
 
-        def draw_table_header(y_start):
-            """Zeichnet die Kopfzeile der Tabelle."""
-            c.setFont("Helvetica-Bold", 10)
-            header_height = 8 * mm
-            c.drawString(x_margin + 2*mm, y_start - (header_height / 1.5), "Frage")
-            c.drawString(x_margin + col_widths[0] + 2*mm, y_start - (header_height / 1.5), "Antwortmöglichkeiten")
-            c.drawString(x_margin + col_widths[0] + col_widths[1] + 2*mm, y_start - (header_height / 1.5), "Antwort")
-            c.grid([x_margin, x_margin + col_widths[0], x_margin + col_widths[0] + col_widths[1], x_margin + sum(col_widths)], [y_start, y_start - header_height])
-            return y_start - header_height
-
-        # 4. Fragen-Tabellen zeichnen
         from itertools import groupby
-        category_order = ['Allgemein', 'Trafo', 'Einspeisung', 'Abgang']
-        keyfunc = lambda q: (q.category, q.category_index)
+        keyfunc = lambda q: (q.category, q.category_index, q.sasil_abgang_index)
         grouped_data = {k: list(v) for k, v in groupby(fragen_db, key=keyfunc)}
         
+        # KEIN JAVASCRIPT MEHR NÖTIG
+
         draw_page_header(c, width, height)
         y_cursor = height - 25 * mm
 
-        for category in category_order:
-            instanzen = sorted([k[1] for k in grouped_data.keys() if k[0] == category])
-            if not instanzen: continue
-
-            for i in instanzen:
-                questions = grouped_data.get((category, i), [])
-                if not questions: continue
-
-                if y_cursor < 100 * mm:
-                    c.showPage()
-                    draw_page_header(c, width, height)
-                    y_cursor = height - 25 * mm
-
-                title = category if category == 'Allgemein' else f'{category} {i}'
-                c.setFont("Helvetica-Bold", 14)
-                c.drawString(x_margin, y_cursor, title)
-                y_cursor -= 10*mm
+        for category, cat_index, abgang_index in sorted(grouped_data.keys(), key=lambda k: (['Allgemein', 'Trafo', 'Einspeisung', 'Abgang', 'SASIL'].index(k[0]), k[1], k[2] or 0)):
+            questions = grouped_data.get((category, cat_index, abgang_index), [])
+            if not questions: continue
+            if y_cursor < 100 * mm:
+                c.showPage(); draw_page_header(c, width, height); y_cursor = height - 25*mm
+            title = category if category == 'Allgemein' else f'{category} {cat_index}'
+            
+            if category == 'SASIL' and abgang_index == 1:
+                c.setFont("Helvetica-Bold", 14); c.drawString(x_margin, y_cursor, title); y_cursor -= 8*mm
                 
-                y_cursor = draw_table_header(y_cursor)
-
-                for q in questions:
-                    # --- START: NEUER LOGIK-BLOCK ---
-                    question_text = q.question.strip()
-
-                    if question_text == "Bis zur wie vielten Oberschwingung soll gemessen werden?":
-                        display_options = "1. - 63."
-                    elif question_text == "Spannungsversorgung des Messgerätes?":
-                        display_options = "SpannungV AC oder DC"
-                    else:
-                        # Fallback: Die ursprüngliche Logik für alle anderen Fragen
-                        display_options = q.options.replace(',', ', ')
-                        if 'ja' in display_options.lower() and 'nein' not in display_options.lower():
-                            display_options += ", Nein"
-                    # --- ENDE: NEUER LOGIK-BLOCK ---
-                    
-                    question_p = Paragraph(q.question, style)
-                    options_p = Paragraph(display_options, style)
-
-                    q_height = question_p.wrap(col_widths[0] - 4*mm, height)[1]
-                    o_height = options_p.wrap(col_widths[1] - 4*mm, height)[1]
-                    
-                    row_height = max(10 * mm, q_height + 4*mm, o_height + 4*mm)
-
-                    if y_cursor - row_height < 40 * mm:
-                        c.showPage()
-                        draw_page_header(c, width, height)
-                        y_cursor = height - 25 * mm
-                        y_cursor = draw_table_header(y_cursor)
-
-                    question_p.drawOn(c, x_margin + 2*mm, y_cursor - row_height + 2*mm)
-                    options_p.drawOn(c, x_margin + col_widths[0] + 2*mm, y_cursor - row_height + 2*mm)
-                    
-                    c.acroForm.textfield(
-                        name=f'question_{q.id}',
-                        x=x_margin + col_widths[0] + col_widths[1] + 2*mm,
-                        y=y_cursor - row_height + 2*mm,
-                        width=col_widths[2] - 4*mm,
-                        height=row_height - 4*mm,
-                        borderStyle='solid', borderWidth=1, borderColor=colors.black,
+                sasil_counts = project_config.get('sasil_abgaenge_counts', {})
+                num_abgaenge = sasil_counts.get(str(cat_index), 1)
+                
+                if num_abgaenge > 1:
+                    # Einfache Checkbox ohne Aktion. Der Name ist wichtig für den Import.
+                    c.acroForm.checkbox(
+                        name=f'sync_sasil_{cat_index}',
+                        x=x_margin,
+                        y=y_cursor - 4*mm,
+                        tooltip="Wenn angekreuzt, werden die Antworten von Abgang 1 für alle anderen Abgänge dieses Feldes übernommen."
                     )
+                    
+                    c.setFont("Helvetica", 10)
+                    c.drawString(x_margin + 10*mm, y_cursor - 1.75*mm, "Alle Messinstrumente sind gleich zu wählen (Wenn diese Aktion ausgewählt ist bitte nur Abgang 1 ausfüllen)")
+                    y_cursor -= 10*mm
 
-                    c.grid([x_margin, x_margin + col_widths[0], x_margin + col_widths[0] + col_widths[1], x_margin + sum(col_widths)], [y_cursor, y_cursor - row_height])
-                    y_cursor -= row_height
-                
-                y_cursor -= 10 * mm
+            if category == 'SASIL':
+                title = f"Abgang {abgang_index}"
+            
+            # ... (Rest der Funktion zum Zeichnen der Tabellen bleibt unverändert) ...
+            c.setFont("Helvetica-Bold", 12); c.drawString(x_margin, y_cursor, title); y_cursor -= 10*mm
+            y_cursor = draw_table_header(y_cursor)
+            for q in questions:
+                field_name = f'question_{q.id}'
+                if category == 'SASIL':
+                    field_name += f'_abgang_{abgang_index}'
+                display_options = "1. - 63." if "Oberschwingung" in q.question else "SpannungV AC oder DC" if "Spannungsversorgung" in q.question else q.options.replace(',', ', ') + (", Nein" if 'ja' in q.options.lower() and 'nein' not in q.options.lower() else "")
+                q_p, o_p = Paragraph(q.question, style), Paragraph(display_options, style)
+                q_h, o_h = q_p.wrap(col_widths[0] - 4*mm, height)[1], o_p.wrap(col_widths[1] - 4*mm, height)[1]
+                row_h = max(10 * mm, q_h + 4*mm, o_h + 4*mm)
+                if y_cursor - row_h < 40 * mm:
+                    c.showPage(); draw_page_header(c, width, height); y_cursor = height - 25*mm
+                    y_cursor = draw_table_header(y_cursor)
+                q_p.drawOn(c, x_margin + 2*mm, y_cursor - row_h + 2*mm)
+                o_p.drawOn(c, x_margin + col_widths[0] + 2*mm, y_cursor - row_h + 2*mm)
+                c.acroForm.textfield(name=field_name, x=x_margin + sum(col_widths[:2]) + 2*mm, y=y_cursor - row_h + 2*mm, width=col_widths[2] - 4*mm, height=row_h - 4*mm, borderStyle='solid', borderWidth=1, borderColor=colors.black)
+                c.grid([x_margin, x_margin + col_widths[0], x_margin + sum(col_widths[:2]), x_margin + sum(col_widths)], [y_cursor, y_cursor - row_h])
+                y_cursor -= row_h
+            y_cursor -= 10*mm
 
-        # 5. PDF speichern und senden
         c.save()
-        pdf_output = buffer.getvalue()
-        buffer.close()
-        
-        return send_file(io.BytesIO(pdf_output), as_attachment=True, download_name='Fragebogen_ausfuellbar.pdf', mimetype='application/pdf')
+        buffer.seek(0)
+        return send_file(buffer, as_attachment=True, download_name='Fragebogen_ausfuellbar.pdf', mimetype='application/pdf')
 
     except Exception as e:
-        flash(f"Ein Fehler ist beim Erstellen des Fragebogen-PDFs aufgetreten: {e}", "error")
+        flash(f"Fehler beim Erstellen des PDFs: {e}", "error")
         import traceback
         traceback.print_exc()
         return redirect(url_for('fragen', **session.get('project_config', {})))
 
 
 def generate_category_chart(entries):
-    """ Erstellt ein Kuchendiagramm mit transparentem Hintergrund und speichert es als PNG."""
-    
     img_dir = os.path.join(basedir, 'static', 'img')
     os.makedirs(img_dir, exist_ok=True)
     filepath = os.path.join(img_dir, 'category_chart.png')
 
-    # Fall 1: Keine Einträge vorhanden
     if not entries:
         fig, ax = plt.subplots(figsize=(8, 5))
-        ax.text(0.5, 0.5, 'Keine Daten für die Auswertung vorhanden.', 
-                ha='center', va='center', fontsize=14, color='gray')
+        ax.text(0.5, 0.5, 'Keine Daten für die Auswertung vorhanden.', ha='center', va='center', fontsize=14, color='gray')
         ax.axis('off')
-        
-        # Hinzugefügt: Transparenter Hintergrund
-        plt.savefig(filepath, bbox_inches='tight', transparent=True)
-        plt.close(fig)
+        plt.savefig(filepath, bbox_inches='tight', transparent=True); plt.close(fig)
         return
 
-    # Fall 2: Einträge sind vorhanden
     try:
-        data = [{'category': entry.category, 'duration': entry.duration.total_seconds() / 3600} for entry in entries]
-        df = pd.DataFrame(data)
+        df = pd.DataFrame([{'category': e.category, 'duration': e.duration.total_seconds() / 3600} for e in entries])
         category_totals = df.groupby('category')['duration'].sum()
 
         fig, ax = plt.subplots(figsize=(10, 7))
-        
-        wedges, texts, autotexts = ax.pie(
-            category_totals.values, 
-            labels=category_totals.index, 
-            autopct='%1.1f%%',
-            startangle=90,
-            pctdistance=0.85,
-            explode=[0.05] * len(category_totals)
-        )
-
-        # Hinzugefügt: Textfarbe auf Grau geändert für bessere Kompatibilität
-        plt.setp(autotexts, size=10, weight="bold", color="white")
-        plt.setp(texts, size=12, color="dimgray") # Ein dunkles Grau
-
-        # Hinzugefügt: Textfarbe für Titel
-        ax.set_title('Zeitverteilung nach Kategorien', size=16, color="dimgray")
-        ax.axis('equal')
-
+        wedges, texts, autotexts = ax.pie(category_totals.values, labels=category_totals.index, autopct='%1.1f%%',
+                                          startangle=90, pctdistance=0.85, explode=[0.05] * len(category_totals))
+        plt.setp(autotexts, size=10, weight="bold", color="white"); plt.setp(texts, size=12, color="dimgray")
+        ax.set_title('Zeitverteilung nach Kategorien', size=16, color="dimgray"); ax.axis('equal')
         plt.tight_layout()
-        
-        # Hinzugefügt: Transparenter Hintergrund
-        plt.savefig(filepath, transparent=True)
-        plt.close(fig)
-
+        plt.savefig(filepath, transparent=True); plt.close(fig)
     except Exception as e:
         print(f"Fehler beim Erstellen der Grafik: {e}")
-
 
 # --- App Start ---
 if __name__ == '__main__':

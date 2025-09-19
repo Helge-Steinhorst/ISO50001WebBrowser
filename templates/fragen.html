@@ -5,11 +5,11 @@
 {% block content %}
     <h1>Fragenkatalog</h1>
 
-    {% if not project_config or not (project_config.num_trafos or project_config.num_einspeisungen or project_config.num_abgaenge) %}
+    {% if not project_config or not (project_config.num_trafos or project_config.num_einspeisungen or project_config.num_abgaenge or project_config.num_sasil) %}
     
     <div class="form-container">
         <h2>Projekt Konfiguration</h2>
-        <p>Bitte geben Sie die Anzahl der Komponenten für Ihr Projekt an.</p>
+        <p>Bitte geben Sie die Anzahl der Hauptkomponenten für Ihr Projekt an.</p>
         <form action="{{ url_for('fragen') }}" method="GET">
             <div class="form-group">
                 <label for="num_trafos">Anzahl der Trafostationen:</label>
@@ -23,6 +23,10 @@
                 <label for="num_abgaenge">Anzahl der Abgangsfelder:</label>
                 <input type="number" id="num_abgaenge" name="num_abgaenge" min="0" value="0" required>
             </div>
+            <div class="form-group">
+                <label for="num_sasil">Anzahl der SASIL-Felder:</label>
+                <input type="number" id="num_sasil" name="num_sasil" min="0" value="0" required>
+            </div>
             <button type="submit" name="setup_submit" value="1" class="btn">Konfiguration starten</button>
         </form>
     </div>
@@ -32,185 +36,219 @@
     <div class="project-config-info">
         <p>
             <b>Aktuelle Konfiguration:</b> 
-            {{ project_config.num_trafos }} Trafo(s), 
-            {{ project_config.num_einspeisungen }} Einspeisung(en), 
-            {{ project_config.num_abgaenge }} Abgangsfeld(er).
+            {{ project_config.get('num_trafos', 0) }} Trafo(s), 
+            {{ project_config.get('num_einspeisungen', 0) }} Einspeisung(en), 
+            {{ project_config.get('num_abgaenge', 0) }} Abgangsfeld(er),
+            {{ project_config.get('num_sasil', 0) }} SASIL-Feld(er).
         </p>
         <a href="{{ url_for('reset_fragen_config') }}" class="btn btn-danger">Neue Konfiguration einrichten</a>
     </div>
 
     <div class="tabs">
         <div class="tab-header">
-            <button class="tab-link" data-tab="Allgemein-1" onclick="openTab(event, 'Allgemein-1')">Allgemein</button>
+            <button class="tab-link" data-tab="Allgemein-1-None" onclick="openTab(event, 'Allgemein-1-None')">Allgemein</button>
             {% for i in range(1, project_config.num_trafos + 1) %}
-            <button class="tab-link" data-tab="Trafo-{{ i }}" onclick="openTab(event, 'Trafo-{{ i }}')">Trafo {{ i }}</button>
+            <button class="tab-link" data-tab="Trafo-{{ i }}-None" onclick="openTab(event, 'Trafo-{{ i }}-None')">Trafo {{ i }}</button>
             {% endfor %}
             {% for i in range(1, project_config.num_einspeisungen + 1) %}
-            <button class="tab-link" data-tab="Einspeisung-{{ i }}" onclick="openTab(event, 'Einspeisung-{{ i }}')">Einspeisung {{ i }}</button>
+            <button class="tab-link" data-tab="Einspeisung-{{ i }}-None" onclick="openTab(event, 'Einspeisung-{{ i }}-None')">Einspeisung {{ i }}</button>
             {% endfor %}
             {% for i in range(1, project_config.num_abgaenge + 1) %}
-            <button class="tab-link" data-tab="Abgang-{{ i }}" onclick="openTab(event, 'Abgang-{{ i }}')">Abgang {{ i }}</button>
+            <button class="tab-link" data-tab="Abgang-{{ i }}-None" onclick="openTab(event, 'Abgang-{{ i }}-None')">Abgang {{ i }}</button>
+            {% endfor %}
+            {% for i in range(1, project_config.num_sasil + 1) %}
+            <button class="tab-link" data-tab="SASIL-{{ i }}-1" onclick="openTab(event, 'SASIL-{{ i }}-1')">SASIL {{ i }}</button>
             {% endfor %}
         </div>
 
-        {% set categories = [('Allgemein', 1), ('Trafo', project_config.num_trafos), ('Einspeisung', project_config.num_einspeisungen), ('Abgang', project_config.num_abgaenge)] %}
+        {% set categories = [('Allgemein', 1), ('Trafo', project_config.num_trafos), ('Einspeisung', project_config.num_einspeisungen), ('Abgang', project_config.num_abgaenge), ('SASIL', project_config.num_sasil)] %}
         
         {% for category_name, count in categories %}
             {% for i in range(1, count + 1) %}
-            <div id="{{ category_name }}-{{ i }}" class="tab-content" style="{{ 'display:block;' if loop.first and category_name == 'Allgemein' else 'display:none;' }}">
-                
-                <h2>{{ category_name }}{{ ' ' + i|string if category_name != 'Allgemein' }}</h2>
-                
-                <div class="form-container">
-                    <h3>Neue Frage erstellen</h3>
-                    <form action="{{ url_for('fragen') }}" method="POST">
-                        <input type="hidden" name="category" value="{{ category_name }}">
-                        <input type="hidden" name="category_index" value="{{ i }}">
-                        <div class="form-group">
-                            <label for="new_question-{{ category_name }}-{{ i }}">Frage:</label>
-                            <input type="text" id="new_question-{{ category_name }}-{{ i }}" name="new_question" required>
+                {% set sasil_counts = project_config.get('sasil_abgaenge_counts', {}) %}
+                {% set abgaenge_count = sasil_counts.get(i|string, 1) if category_name == 'SASIL' else 1 %}
+
+                {% for j in range(1, abgaenge_count + 1) %}
+                {% set sasil_abgang_index_key = j if category_name == 'SASIL' else None %}
+                {% set sasil_abgang_index_str = j if category_name == 'SASIL' else 'None' %}
+
+                <div id="{{ category_name }}-{{ i }}-{{ sasil_abgang_index_str }}" class="tab-content" style="display:none;">
+                    
+                    {% if category_name == 'SASIL' %}
+                    <div class="sasil-header">
+                        <form action="{{ url_for('configure_sasil_abgaenge') }}" method="POST" class="sasil-config-form">
+                            <input type="hidden" name="sasil_index" value="{{ i }}">
+                            <label for="num_abgaenge_sasil_{{ i }}">Anzahl Abgänge:</label>
+                            <input type="number" id="num_abgaenge_sasil_{{ i }}" name="num_abgaenge" min="1" value="{{ abgaenge_count }}" class="sasil-abgang-input">
+                            <button type="submit" class="btn btn-sm">Aktualisieren</button>
+                        </form>
+                         <form action="{{ url_for('copy_sasil_answers') }}" method="POST" class="sasil-copy-form">
+                            <input type="hidden" name="sasil_index" value="{{ i }}">
+                            <button type="submit" class="btn btn-secondary btn-sm">Antworten von Abgang 1 für alle übernehmen</button>
+                        </form>
+                    </div>
+
+                    <div class="sub-tabs">
+                        {% for k in range(1, abgaenge_count + 1) %}
+                        <a class="sub-tab-link {% if k == j %}active{% endif %}" onclick="openTab(event, 'SASIL-{{ i }}-{{ k }}')">Abgang {{ k }}</a>
+                        {% endfor %}
+                    </div>
+                    <h2>SASIL {{ i }} - Abgang {{ j }}</h2>
+                    {% else %}
+                    <h2>{{ category_name }}{{ ' ' + i|string if category_name != 'Allgemein' }}</h2>
+                    {% endif %}
+
+                    <div class="form-container">
+                        <div class="form-header">
+                            <h3>Neue Frage erstellen</h3>
+                            {% if category_name != 'Allgemein' %}
+                            <form action="{{ url_for('synchronize_questions') }}" method="POST" class="sync-form">
+                                <input type="hidden" name="source_category" value="{{ category_name }}">
+                                <input type="hidden" name="source_category_index" value="{{ i }}">
+                                {% if category_name == 'SASIL' %}
+                                <input type="hidden" name="source_sasil_abgang_index" value="{{ j }}">
+                                {% endif %}
+                                <button type="submit" class="btn btn-sm btn-info" title="Kopiert alle Fragen aus diesem Reiter in alle anderen Bereiche (Trafos, Einspeisungen, etc.)">
+                                    Fragen auf alle anderen Bereiche anwenden
+                                </button>
+                            </form>
+                            {% endif %}
                         </div>
-                        <div class="form-group">
-                            <label for="options-{{ category_name }}-{{ i }}">Antwortoptionen (kommasepariert):</label>
-                            <input type="text" id="options-{{ category_name }}-{{ i }}" name="options" placeholder="z.B. Ja,Nein" required>
-                        </div>
-                        <button type="submit" name="new_question" value="1" class="btn">Frage hinzufügen</button>
-                    </form>
-                </div>
-
-
-
-               <div class="questions-list">
-                    <h3>Bestehende Fragen <button class="btn btn-sm" onclick="location.reload()">Reihenfolge neu laden</button></h3>
-
-                    <form method="POST" action="{{ url_for('fragen') }}" id="answers-form-{{ category_name }}-{{ i }}">
-                        <input type="hidden" name="save_answers" value="1">
-                        <input type="hidden" name="category" value="{{ category_name }}"> {% set current_questions = grouped_questions.get((category_name, i), []) %}
-                        {% if not current_questions %}
-                            <p>Noch keine Fragen in dieser Kategorie vorhanden.</p>
-                        {% else %}
-                            {# Die Schleife, die jede Frage untereinander anzeigt #}
-                            {% for frage in current_questions %}
-                            <div class="question-item">
-                                <div class="question-content">
-                                    <p><strong>{{ frage.question }}</strong></p>
-                                    <div class="options">
-                                        {% if frage.options.strip() == 'TEXTINPUT' %}
-                                            <input type="text" name="answer_{{ frage.id }}" value="{{ frage.answer or '' }}" placeholder="z.B. 230V AC" class="form-control" style="width: 100%;">
-                                        {% else %}
-                                            {% for option in frage.options.split(',') %}
-                                            <label>
-                                                <input type="radio" name="answer_{{ frage.id }}" value="{{ option.strip() }}" {% if frage.answer == option.strip() %}checked{% endif %}> {{ option.strip() }}
-                                            </label>
-                                            {% endfor %}
-                                        {% endif %}
-                                        <label>
-                                            <input type="radio" name="answer_{{ frage.id }}" value="nicht Relevant" {% if frage.answer == 'nicht Relevant' %}checked{% endif %}> 
-                                            <i>nicht Relevant</i>
-                                        </label>
-                                    </div>
-                                    <div class="question-actions">
-                                        <button type="button" class="btn btn-secondary btn-sm" onclick="toggleEditForm({{ frage.id }})">Bearbeiten</button>
-                                        <button type="submit" formaction="{{ url_for('delete_question', question_id=frage.id) }}" class="btn btn-danger btn-sm">Löschen</button>
-                                    </div>
-
-                                    <div id="edit-form-{{ frage.id }}" class="edit-form" style="display:none;">
-                                        <div class="form-group">
-                                            <label for="edited_question_text-{{ frage.id }}">Fragetext bearbeiten:</label>
-                                            <input type="text" id="edited_question_text-{{ frage.id }}" name="edited_question_text_{{ frage.id }}" value="{{ frage.question }}" class="form-control">
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="edited_options-{{ frage.id }}">Antwortoptionen bearbeiten (kommasepariert):</label>
-                                            <input type="text" id="edited_options-{{ frage.id }}" name="edited_options_{{ frage.id }}" value="{{ frage.options }}" class="form-control">
-                                        </div>
-                                        <button type="submit" class="btn btn-sm" form="answers-form-{{ category_name }}-{{ i }}" formaction="{{ url_for('edit_question', question_id=frage.id) }}">Änderungen speichern</button>
-                                        <button type="button" class="btn btn-sm btn-secondary" onclick="toggleEditForm({{ frage.id }})">Abbrechen</button>
-                                    </div>
-                                </div>
-                                <div class="index-input">
-                                    <label for="index-{{ frage.id }}">Index</label>
-                                    <input type="number" id="index-{{ frage.id }}" value="{{ frage.sort_index }}" onchange="updateIndex({{ frage.id }}, this.value)">
-                                </div>
+                        <form action="{{ url_for('fragen') }}" method="POST">
+                            <input type="hidden" name="category" value="{{ category_name }}">
+                            <input type="hidden" name="category_index" value="{{ i }}">
+                            {% if category_name == 'SASIL' %}
+                            <input type="hidden" name="sasil_abgang_index" value="{{ j }}">
+                            {% endif %}
+                            <div class="form-group">
+                                <label for="new_question-{{ category_name }}-{{ i }}-{{ j }}">Frage:</label>
+                                <input type="text" id="new_question-{{ category_name }}-{{ i }}-{{ j }}" name="new_question" required>
                             </div>
-                            {% endfor %}
+                            <div class="form-group">
+                                <label for="options-{{ category_name }}-{{ i }}-{{ j }}">Antwortoptionen (kommasepariert):</label>
+                                <input type="text" id="options-{{ category_name }}-{{ i }}-{{ j }}" name="options" placeholder="z.B. Ja,Nein" required>
+                            </div>
+                            <button type="submit" name="new_question" value="1" class="btn">Frage hinzufügen</button>
+                        </form>
+                    </div>
 
-                            {# Der Button steht jetzt hier, NACH der Schleife #}
-                            <button type="submit" class="btn" style="margin-top: 1.5rem;">Antworten speichern</button>
-                        {% endif %}
-                    </form>
+
+                    <div class="questions-list">
+                        <h3>Bestehende Fragen <button class="btn btn-sm" onclick="location.reload()">Reihenfolge neu laden</button></h3>
+                        <form method="POST" action="{{ url_for('fragen') }}" id="answers-form-{{ category_name }}-{{ i }}-{{ j }}">
+                            <input type="hidden" name="save_answers" value="1">
+                            <input type="hidden" name="category" value="{{ category_name }}">
+                            <input type="hidden" name="category_index" value="{{ i }}">
+                            {% if category_name == 'SASIL' %}<input type="hidden" name="sasil_abgang_index" value="{{ j }}">{% endif %}
+                            
+                            {% set current_questions = grouped_questions.get((category_name, i, sasil_abgang_index_key), []) %}
+                            {% if not current_questions %}
+                                <p>Noch keine Fragen in dieser Kategorie vorhanden.</p>
+                            {% else %}
+                                {% for frage in current_questions %}
+                                <div class="question-item">
+                                    <div class="question-content">
+                                        <p><strong>{{ frage.question }}</strong></p>
+                                        <div class="options">
+                                            {% if frage.options.strip() == 'TEXTINPUT' %}
+                                                <input type="text" name="answer_{{ frage.id }}" value="{{ frage.answer or '' }}" placeholder="z.B. 230V AC" class="form-control" style="width: 100%;">
+                                            {% else %}
+                                                {% for option in frage.options.split(',') %}
+                                                <label><input type="radio" name="answer_{{ frage.id }}" value="{{ option.strip() }}" {% if frage.answer == option.strip() %}checked{% endif %}> {{ option.strip() }}</label>
+                                                {% endfor %}
+                                            {% endif %}
+                                            <label><input type="radio" name="answer_{{ frage.id }}" value="nicht Relevant" {% if frage.answer == 'nicht Relevant' %}checked{% endif %}> <i>nicht Relevant</i></label>
+                                        </div>
+                                        <div class="question-actions">
+                                            <button type="button" class="btn btn-secondary btn-sm" onclick="toggleEditForm({{ frage.id }})">Bearbeiten</button>
+                                            <button type="submit" formaction="{{ url_for('delete_question', question_id=frage.id) }}" class="btn btn-danger btn-sm">Löschen</button>
+                                        </div>
+                                        <div id="edit-form-{{ frage.id }}" class="edit-form" style="display:none;">
+                                            <div class="form-group">
+                                                <label for="edited_question_text-{{ frage.id }}">Fragetext bearbeiten:</label>
+                                                <input type="text" id="edited_question_text-{{ frage.id }}" name="edited_question_text_{{ frage.id }}" value="{{ frage.question }}" class="form-control">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="edited_options-{{ frage.id }}">Antwortoptionen bearbeiten (kommasepariert):</label>
+                                                <input type="text" id="edited_options-{{ frage.id }}" name="edited_options_{{ frage.id }}" value="{{ frage.options }}" class="form-control">
+                                            </div>
+                                            <button type="submit" class="btn btn-sm" form="answers-form-{{ category_name }}-{{ i }}-{{ j }}" formaction="{{ url_for('edit_question', question_id=frage.id) }}">Änderungen speichern</button>
+                                            <button type="button" class="btn btn-sm btn-secondary" onclick="toggleEditForm({{ frage.id }})">Abbrechen</button>
+                                        </div>
+                                    </div>
+                                    <div class="index-input">
+                                        <label for="index-{{ frage.id }}">Index</label>
+                                        <input type="number" id="index-{{ frage.id }}" value="{{ frage.sort_index }}" onchange="updateIndex({{ frage.id }}, this.value)">
+                                    </div>
+                                </div>
+                                {% endfor %}
+                                <button type="submit" class="btn" style="margin-top: 1.5rem;">Antworten speichern</button>
+                            {% endif %}
+                        </form>
+                    </div>
                 </div>
-            </div>
+                {% endfor %}
             {% endfor %}
         {% endfor %}
     </div>
 
-   <div class="form-container export-section">
-    <h2>Export & Auswertung</h2>
+    <div class="form-container export-section">
+        <h2>Export & Auswertung</h2>
+        <h3 style="margin-top: 2rem;">Option 1: Manuelle Eingabe</h3>
+        <p>Nachdem Sie alle Antworten oben manuell ausgefüllt und gespeichert haben, können Sie hier die Lösungs-PDF erstellen.</p>
+        <form action="{{ url_for('download_filtered_pdf') }}" method="POST" style="margin-bottom: 2rem;">
+            <div class="form-group"><label for="bearbeiter_filter">Bearbeitername:</label><input type="text" id="bearbeiter_filter" name="bearbeiter" placeholder="Ihr Name" autocomplete="off" required></div>
+            <button type="submit" class="btn">Lösung basierend auf manuellen Eingaben filtern</button>
+        </form>
+        <hr>
+        <h3 style="margin-top: 2rem;">Option 2: PDF-Import</h3>
+        <p>Laden Sie hier eine ausgefüllte PDF-Datei hoch, um die Antworten zu übernehmen und direkt die gefilterte Lösungs-PDF zu erhalten.</p>
+        <form action="{{ url_for('import_answers_pdf') }}" method="POST" enctype="multipart/form-data">
+            <div class="form-group"><label for="bearbeiter_import">Bearbeitername:</label><input type="text" id="bearbeiter_import" name="bearbeiter_import" placeholder="Ihr Name" autocomplete="off" required></div>
+            <div class="form-group"><label for="answers_pdf">Ausgefüllte PDF-Datei:</label><input type="file" id="answers_pdf" name="answers_pdf" accept=".pdf" required></div>
+            <button type="submit" class="btn">Antworten importieren & Lösung erstellen</button>
+        </form>
+        <hr>
+        <h3 style="margin-top: 2rem;">Leeren Fragebogen als PDF exportieren</h3>
+        <form action="{{ url_for('export_questions_pdf') }}" method="POST">
+            <div class="form-group"><label for="bearbeiter_export">Bearbeitername:</label><input type="text" id="bearbeiter_export" name="bearbeiter" placeholder="Ihr Name" autocomplete="off" required></div>
+            <div class="form-group"><label for="kunde_export">Kundenname:</label><input type="text" id="kunde_export" name="kunde" placeholder="Name des Kunden" autocomplete="off" required></div>
+            <button type="submit" class="btn">Ausfüllbaren Fragebogen exportieren</button>
+        </form>
+    </div>
 
-    <h3 style="margin-top: 2rem;">Option 1: Manuelle Eingabe</h3>
-    <p>Nachdem Sie alle Antworten oben manuell ausgefüllt und gespeichert haben, können Sie hier die Lösungs-PDF erstellen.</p>
-    <form action="{{ url_for('download_filtered_pdf') }}" method="POST" style="margin-bottom: 2rem;">
-        <div class="form-group">
-            <label for="bearbeiter_filter">Bearbeitername:</label>
-            <input type="text" id="bearbeiter_filter" name="bearbeiter" placeholder="Ihr Name" autocomplete="off" required>
-        </div>
-        <button type="submit" class="btn">Lösung basierend auf manuellen Eingaben filtern</button>
-    </form>
-    
-    <hr>
-
-    <h3 style="margin-top: 2rem;">Option 2: PDF-Import</h3>
-    <p>Laden Sie hier eine ausgefüllte PDF-Datei hoch, um die Antworten zu übernehmen und direkt die gefilterte Lösungs-PDF zu erhalten.</p>
-    <form action="{{ url_for('import_answers_pdf') }}" method="POST" enctype="multipart/form-data">
-        <div class="form-group">
-            <label for="bearbeiter_import">Bearbeitername:</label>
-            <input type="text" id="bearbeiter_import" name="bearbeiter_import" placeholder="Ihr Name" autocomplete="off" required>
-        </div>
-        <div class="form-group">
-            <label for="answers_pdf">Ausgefüllte PDF-Datei:</label>
-            <input type="file" id="answers_pdf" name="answers_pdf" accept=".pdf" required>
-        </div>
-        <button type="submit" class="btn">Antworten importieren & Lösung erstellen</button>
-    </form>
-
-    <hr>
-
-    <h3 style="margin-top: 2rem;">Leeren Fragebogen als PDF exportieren</h3>
-    <form action="{{ url_for('export_questions_pdf') }}" method="POST">
-        <div class="form-group">
-            <label for="bearbeiter_export">Bearbeitername:</label>
-            <input type="text" id="bearbeiter_export" name="bearbeiter" placeholder="Ihr Name" autocomplete="off" required>
-        </div>
-        <div class="form-group">
-            <label for="kunde_export">Kundenname:</label>
-            <input type="text" id="kunde_export" name="kunde" placeholder="Name des Kunden" autocomplete="off" required>
-        </div>
-        <button type="submit" class="btn">Ausfüllbaren Fragebogen exportieren</button>
-    </form>
-</div>
     <script>
         function openTab(evt, tabName) {
-            var i, tabcontent, tablinks;
+            let i, tabcontent, tablinks;
             tabcontent = document.getElementsByClassName("tab-content");
-            for (i = 0; i < tabcontent.length; i++) {
-                tabcontent[i].style.display = "none";
-            }
+            for (i = 0; i < tabcontent.length; i++) tabcontent[i].style.display = "none";
+            
             tablinks = document.getElementsByClassName("tab-link");
-            for (i = 0; i < tablinks.length; i++) {
-                tablinks[i].className = tablinks[i].className.replace(" active", "");
-            }
+            for (i = 0; i < tablinks.length; i++) tablinks[i].classList.remove("active");
+
             document.getElementById(tabName).style.display = "block";
-            if(evt) {
-                evt.currentTarget.className += " active";
-            } else {
-                document.querySelector(`.tab-link[data-tab='${tabName}']`).classList.add('active');
+            
+            const mainTabButton = document.querySelector(`.tab-link[data-tab^='${tabName.split('-').slice(0, 2).join('-')}']`);
+            if(mainTabButton) mainTabButton.classList.add('active');
+
+            if (evt && evt.currentTarget.classList.contains('sub-tab-link')) {
+                const parentSubTabs = evt.currentTarget.parentElement.children;
+                for(let sub of parentSubTabs) sub.classList.remove('active');
+                evt.currentTarget.classList.add('active');
             }
+            window.location.hash = tabName;
         }
 
         document.addEventListener("DOMContentLoaded", function() {
             const activeTabName = window.location.hash.substring(1);
             if (activeTabName && document.getElementById(activeTabName)) {
                 openTab(null, activeTabName);
+                const subTab = document.querySelector(`.sub-tab-link[onclick*="'${activeTabName}'"]`);
+                if(subTab) {
+                    const parent = subTab.parentElement;
+                    for(let child of parent.children) child.classList.remove('active');
+                    subTab.classList.add('active');
+                }
             } else if (document.querySelector('.tab-link')) {
                 document.querySelector('.tab-link').click();
             }
@@ -223,65 +261,59 @@
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: `index=${newIndex}`
                 });
-                const result = await response.json();
-                if (!result.success) {
-                    alert(`Fehler beim Speichern des Index: ${result.message}`);
-                }
+                if (!response.ok) alert(`Fehler: ${response.statusText}`);
             } catch (error) {
-                alert(`Ein Netzwerkfehler ist aufgetreten: ${error}`);
+                alert(`Netzwerkfehler: ${error}`);
             }
         }
 
         function toggleEditForm(questionId) {
             const form = document.getElementById(`edit-form-${questionId}`);
-            if (form.style.display === 'none') {
-                form.style.display = 'block';
-            } else {
-                form.style.display = 'none';
-            }
+            form.style.display = form.style.display === 'none' ? 'block' : 'none';
         }
     </script>
 
     <style>
         .project-config-info { background-color: var(--secondary-bg-color); padding: 1rem; border-radius: 8px; margin-bottom: 2rem; border: 1px solid var(--border-color); }
-        .tabs .tab-header { overflow: hidden; border-bottom: 1px solid var(--accent-color); margin-bottom: 1rem; }
-        .tabs .tab-link { background-color: inherit; float: left; border: none; outline: none; cursor: pointer; padding: 14px 16px; transition: 0.3s; color: var(--primary-text-color); font-size: 1rem; }
+        .tabs .tab-header { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--accent-color); margin-bottom: 1rem; }
+        .tabs .tab-link { background-color: inherit; border: none; outline: none; cursor: pointer; padding: 14px 16px; transition: 0.3s; color: var(--primary-text-color); font-size: 1rem; border-radius: 6px 6px 0 0; }
         .tabs .tab-link:hover { background-color: var(--secondary-bg-color); }
         .tabs .tab-link.active { background-color: var(--accent-color); color: white; }
         .tab-content { display: none; padding: 6px 12px; border-top: none; }
-        .question-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 1.5rem;
-            margin-bottom: 1.5rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid var(--border-color);
-        }
+        .question-item { display: flex; justify-content: space-between; align-items: flex-start; gap: 1.5rem; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color); }
         .question-content { flex-grow: 1; }
         .index-input { text-align: center; }
         .index-input label { font-size: 0.8rem; display: block; margin-bottom: 0.25rem; }
-        .index-input input {
-            width: 70px; padding: 0.5rem; font-size: 1.2rem; text-align: center;
-            border: 1px solid var(--border-color); background-color: var(--primary-bg-color);
-            color: var(--primary-text-color); border-radius: 4px;
-        }
+        .index-input input { width: 70px; padding: 0.5rem; font-size: 1.2rem; text-align: center; border: 1px solid var(--border-color); background-color: var(--primary-bg-color); color: var(--primary-text-color); border-radius: 4px; }
         .question-item .options { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0.5rem 0; }
         .question-actions { margin-bottom: 1rem; }
         .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
         .export-section { margin-top: 3rem; }
-        
-        .edit-form {
-            margin-top: 1rem;
-            padding: 1rem;
-            background-color: var(--primary-bg-color);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-        }
+        .edit-form { margin-top: 1rem; padding: 1rem; background-color: var(--primary-bg-color); border: 1px solid var(--border-color); border-radius: 6px; }
         .edit-form .form-group { margin-bottom: 1rem; }
-        .questions-list {
-            display: block; /* Stellt sicher, dass der Container sich normal verhält */
+        
+        /* Neue Stile für SASIL */
+        .sasil-header { display: flex; justify-content: space-between; align-items: center; background-color: var(--secondary-bg-color); padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem; }
+        .sasil-config-form, .sasil-copy-form { display: flex; align-items: center; gap: 0.5rem; }
+        .sasil-abgang-input { width: 80px; padding: 0.3rem; }
+        .sub-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
+        .sub-tab-link { padding: 8px 15px; border: none; background-color: #f1f1f1; cursor: pointer; border-radius: 20px; text-decoration: none; color: #333; transition: all 0.3s ease; }
+        .sub-tab-link:hover { background-color: #ddd; }
+        .sub-tab-link.active { background-color: var(--accent-color); color: white; font-weight: bold; }
+
+        /* Stil für den Sync-Button */
+        .form-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
         }
+        .btn-info {
+            background-color: #17a2b8;
+            color: white;
+            border: none;
+        }
+
     </style>
 
     {% endif %}
