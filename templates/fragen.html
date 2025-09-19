@@ -152,7 +152,7 @@
     <form action="{{ url_for('download_filtered_pdf') }}" method="POST" style="margin-bottom: 2rem;">
         <div class="form-group">
             <label for="bearbeiter_filter">Bearbeitername:</label>
-            <input type="text" id="bearbeiter_filter" name="bearbeiter" placeholder="Ihr Name" required>
+            <input type="text" id="bearbeiter_filter" name="bearbeiter" placeholder="Ihr Name" autocomplete="off" required>
         </div>
         <button type="submit" class="btn">Lösung basierend auf manuellen Eingaben filtern</button>
     </form>
@@ -164,7 +164,7 @@
     <form action="{{ url_for('import_answers_pdf') }}" method="POST" enctype="multipart/form-data">
         <div class="form-group">
             <label for="bearbeiter_import">Bearbeitername:</label>
-            <input type="text" id="bearbeiter_import" name="bearbeiter_import" placeholder="Ihr Name" required>
+            <input type="text" id="bearbeiter_import" name="bearbeiter_import" placeholder="Ihr Name" autocomplete="off" required>
         </div>
         <div class="form-group">
             <label for="answers_pdf">Ausgefüllte PDF-Datei:</label>
@@ -179,7 +179,11 @@
     <form action="{{ url_for('export_questions_pdf') }}" method="POST">
         <div class="form-group">
             <label for="bearbeiter_export">Bearbeitername:</label>
-            <input type="text" id="bearbeiter_export" name="bearbeiter" placeholder="Ihr Name" required>
+            <input type="text" id="bearbeiter_export" name="bearbeiter" placeholder="Ihr Name" autocomplete="off" required>
+        </div>
+        <div class="form-group">
+            <label for="kunde_export">Kundenname:</label>
+            <input type="text" id="kunde_export" name="kunde" placeholder="Name des Kunden" autocomplete="off" required>
         </div>
         <button type="submit" class="btn">Ausfüllbaren Fragebogen exportieren</button>
     </form>

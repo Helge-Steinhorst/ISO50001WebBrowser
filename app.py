@@ -28,6 +28,7 @@ from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.utils import ImageReader
 from PIL import Image # Wichtig: Fügen Sie diesen Import hinzu
 
+basedir = os.path.abspath(os.path.dirname(__file__))
 
 # --- App Konfiguration ---
 app = Flask(__name__)
@@ -387,7 +388,8 @@ def update_index(question_id):
 
 def generate_filtered_solutions_pdf(bearbeiter):
     try:
-        df_excel = pd.read_excel('Daten.xlsx', sheet_name='Fragestellungen', header=None)
+        # GEÄNDERT: Die Excel-Datei wird jetzt innerhalb der Schleife gelesen.
+        # df_excel = pd.read_excel('Daten.xlsx', sheet_name='Fragestellungen', header=None) # ENTFERNT
         project_config = session.get('project_config', {})
         
         category_config_keys = {
@@ -396,18 +398,34 @@ def generate_filtered_solutions_pdf(bearbeiter):
             'Abgang': 'num_abgaenge'
         }
 
+        # GEÄNDERT: Diese Konfiguration spiegelt jetzt Ihre neue Excel-Struktur wider.
         category_configs = {
-            'Trafo': {'header_row': 14, 'data_start_row': 15, 'data_end_row': 38, 'solution_start_col': 26},
-            'Einspeisung': {'header_row': 40, 'data_start_row': 41, 'data_end_row': 64, 'solution_start_col': 26},
-            'Abgang': {'header_row': 77, 'data_start_row': 78, 'data_end_row': 101, 'solution_start_col': 26}
+            'Trafo': {
+                'sheet_name': 'Filter_Trafo',
+                'header_row': 14,           # Zeile 15 in Excel
+                'data_start_row': 15,       # Zeile 16 in Excel
+                'solution_start_col': 26    # Spalte AA in Excel
+            },
+            'Einspeisung': {
+                'sheet_name': 'Filter_Einspeisung',
+                'header_row': 14,
+                'data_start_row': 15,
+                'solution_start_col': 26
+            },
+            'Abgang': {
+                'sheet_name': 'Filter_Abgang',
+                'header_row': 14,
+                'data_start_row': 15,
+                'solution_start_col': 26
+            }
         }
 
         pdf = FPDF(orientation='P', unit='mm', format='A4')
         create_pdf_cover(pdf, bearbeiter, "Gefilterte Lösungen")
         found_any_solution = False
-        
-        # NEU: Eine Liste für Diagnose-Nachrichten
         diagnostics = []
+
+        pdf.add_page()
 
         for category, config in category_configs.items():
             config_key = category_config_keys.get(category)
@@ -416,27 +434,37 @@ def generate_filtered_solutions_pdf(bearbeiter):
             if num_components == 0:
                 continue
             
-            header_series = df_excel.iloc[config['header_row']]
-            df_category_data = df_excel.iloc[config['data_start_row']:config['data_end_row']].copy()
+            # NEU: Lese die spezifische Tabelle für die aktuelle Kategorie
+            try:
+                df_sheet = pd.read_excel('Daten.xlsx', sheet_name=config['sheet_name'], header=None)
+            except ValueError:
+                diagnostics.append(f"FEHLER: Das Tabellenblatt '{config['sheet_name']}' wurde in 'Daten.xlsx' nicht gefunden.")
+                continue # Nächste Kategorie versuchen
+
+            # GEÄNDERT: Nutze die neuen Konfigurationswerte
+            header_series = df_sheet.iloc[config['header_row']]
+            # Lese von der Startzeile bis zum Ende der Tabelle
+            df_category_data = df_sheet.iloc[config['data_start_row']:].copy()
             df_category_data.columns = [str(h).strip() if pd.notna(h) else '' for h in header_series]
 
             for i in range(1, num_components + 1):
                 component_name = f"{category} {i}"
                 df_to_filter = df_category_data.copy()
                 
+                # Die Logik zum Abrufen der Antworten aus der DB bleibt unverändert
                 answers = QuestionAnswer.query.filter(
                     QuestionAnswer.category == category, QuestionAnswer.category_index == i,
                     QuestionAnswer.answer.isnot(None), QuestionAnswer.answer != '',
                     QuestionAnswer.answer != 'nicht Relevant'
                 ).all()
 
-                # Diagnose-Schritt 1: Prüfen, ob Antworten in der DB gefunden wurden
                 if not answers:
-                    diagnostics.append(f"Für '{component_name}' wurden keine relevanten Antworten in der Datenbank gefunden. Wird übersprungen.")
+                    diagnostics.append(f"Für '{component_name}' wurden keine relevanten Antworten in der Datenbank gefunden.")
                     continue
                 
                 diagnostics.append(f"Für '{component_name}' wurden {len(answers)} Antworten gefunden. Beginne Filterung.")
-
+                
+                # Die eigentliche Filterlogik basierend auf den Antworten bleibt unverändert
                 for answer_obj in answers:
                     question_text = answer_obj.question.strip()
                     user_answer = answer_obj.answer.strip()
@@ -444,7 +472,6 @@ def generate_filtered_solutions_pdf(bearbeiter):
                     if question_text not in df_to_filter.columns:
                         continue
                     
-                    # ... (Ihre bestehende Filterlogik bleibt hier unverändert)
                     if question_text == "Spannungsversorgung des Messgerätes?":
                         if not (match := re.search(r'(\d+)\s*v?\s*(ac|dc|ac/dc)?', user_answer.lower())): continue
                         user_voltage, user_type = int(match.group(1)), (match.group(2) or "ac/dc").upper()
@@ -467,29 +494,36 @@ def generate_filtered_solutions_pdf(bearbeiter):
                 final_solutions = df_to_filter.iloc[:, config['solution_start_col']:]
                 final_solutions = final_solutions.dropna(how='all', axis=1).dropna(how='all', axis=0)
                 
-                # Diagnose-Schritt 2: Prüfen, ob nach dem Filtern noch Lösungen übrig sind
+                # Die Logik zur PDF-Erstellung der Tabellen bleibt unverändert
                 if not final_solutions.empty:
-                    diagnostics.append(f"Erfolgreich! Für '{component_name}' wurden {len(final_solutions)} Lösungen gefunden und zur PDF hinzugefügt.")
+                    diagnostics.append(f"Erfolgreich! Für '{component_name}' wurden {len(final_solutions)} Lösungen gefunden.")
                     found_any_solution = True
-                    pdf.add_page()
-                    pdf.set_font("Arial", 'B', 14)
-                    pdf.cell(0, 10, txt=f"Lösungen für {component_name}", ln=True, align='L')
+
+                    TITLE_HEIGHT = 10
+                    ROW_HEIGHT = 10
                     
-                    # ... (Rest der PDF-Tabellenerstellung bleibt unverändert)
+                    num_rows = 1 + len(final_solutions)
+                    required_height = TITLE_HEIGHT + (num_rows * ROW_HEIGHT)
+
+                    if pdf.get_y() + required_height > (pdf.h - pdf.b_margin):
+                        pdf.add_page()
+                    
+                    pdf.set_font("Arial", 'B', 14)
+                    pdf.cell(0, TITLE_HEIGHT, txt=f"Lösungen für {component_name}", ln=True, align='L')
+                    
                     pdf.set_font("Arial", 'B', 10)
                     col_widths = [(pdf.w - 20) / len(final_solutions.columns)] * len(final_solutions.columns)
                     for j, col_header in enumerate(final_solutions.columns):
-                        pdf.cell(col_widths[j], 10, str(col_header), 1, 0, 'C')
+                        pdf.cell(col_widths[j], ROW_HEIGHT, str(col_header), 1, 0, 'C')
                     pdf.ln()
                     pdf.set_font("Arial", '', 9)
                     for _, row in final_solutions.iterrows():
                         for j, item in enumerate(row):
-                            pdf.cell(col_widths[j], 10, str(item) if pd.notna(item) else "", 1, 0, 'L')
+                            pdf.cell(col_widths[j], ROW_HEIGHT, str(item) if pd.notna(item) else "", 1, 0, 'L')
                         pdf.ln()
                 else:
                     diagnostics.append(f"Keine passenden Lösungen für '{component_name}' nach der Filterung gefunden.")
 
-        # Zeige alle Diagnose-Nachrichten als eine einzige Flash-Nachricht an
         flash("Diagnose-Bericht: \n" + "\n".join(diagnostics), "info")
 
         if not found_any_solution:
@@ -526,6 +560,30 @@ def import_answers_pdf():
         return redirect(url_for('fragen'))
 
     try:
+        # --- START: NEUER BLOCK ZUR BEREINIGUNG DER DATENBANK ---
+
+        # 1. Projektkonfiguration aus der Session laden
+        project_config = session.get('project_config', {})
+        if not project_config:
+            flash('Keine Projektkonfiguration in der Session gefunden. Bitte das Projekt neu laden.', 'error')
+            return redirect(url_for('index'))
+
+        # 2. Alle Fragen identifizieren, die zu diesem Projekt gehören
+        conditions_to_reset = []
+        if (n := project_config.get('num_trafos', 0)) > 0: conditions_to_reset.append((QuestionAnswer.category == 'Trafo') & (QuestionAnswer.category_index <= n))
+        if (n := project_config.get('num_einspeisungen', 0)) > 0: conditions_to_reset.append((QuestionAnswer.category == 'Einspeisung') & (QuestionAnswer.category_index <= n))
+        if (n := project_config.get('num_abgaenge', 0)) > 0: conditions_to_reset.append((QuestionAnswer.category == 'Abgang') & (QuestionAnswer.category_index <= n))
+        
+        # Die 'Allgemein'-Fragen ebenfalls immer zurücksetzen
+        conditions_to_reset.append(QuestionAnswer.category == 'Allgemein')
+        
+        # 3. Alle Antworten für diese Fragen auf NULL setzen (effizientes Massen-Update)
+        if conditions_to_reset:
+            QuestionAnswer.query.filter(or_(*conditions_to_reset)).update({QuestionAnswer.answer: None}, synchronize_session=False)
+            
+        # --- ENDE: NEUER BLOCK ---
+
+        # Bestehender Code zum Einlesen der PDF
         reader = PdfReader(file.stream)
         fields = reader.get_fields()
         
@@ -535,21 +593,23 @@ def import_answers_pdf():
             
         answers_updated = 0
         for field_name, field_data in fields.items():
-            if field_name.startswith('question_') and field_data.value:
+            field_value = field_data.get("/V")
+            if field_name.startswith('question_') and field_value and str(field_value).strip():
                 question_id = int(field_name.split('_')[1])
-                answer_value = field_data.value
+                answer_value = str(field_value).strip()
                 
-                # NEUE REGEL: Behandelt "Nein" (unabhängig von Groß-/Kleinschreibung)
-                # als "nicht Relevant".
-                if answer_value.strip().lower() == 'nein':
+                if answer_value.lower() == 'nein':
                     answer_value = 'nicht Relevant'
                 
-                question_entry = QuestionAnswer.query.get(question_id)
+                # Hier wird nicht mehr .get() benötigt, da wir die Zeile direkt aktualisieren
+                question_entry = QuestionAnswer.query.filter_by(id=question_id).first()
                 if question_entry:
                     question_entry.answer = answer_value
                     answers_updated += 1
         
+        # Speichert sowohl das Zurücksetzen als auch die neuen Antworten
         db.session.commit()
+        
         flash(f'{answers_updated} Antworten wurden erfolgreich aus der PDF importiert!', 'success')
         
         return generate_filtered_solutions_pdf(bearbeiter)
@@ -557,13 +617,16 @@ def import_answers_pdf():
     except Exception as e:
         db.session.rollback()
         flash(f'Ein Fehler ist beim Einlesen der PDF aufgetreten: {e}', 'error')
-        print(e)
+        import traceback
+        traceback.print_exc()
         return redirect(url_for('fragen', **session.get('project_config', {})))
+
     
 @app.route('/export_questions_pdf', methods=['POST'])
 def export_questions_pdf():
     try:
         bearbeiter = request.form.get('bearbeiter', 'N/A')
+        kunde = request.form.get('kunde', 'N/A')
         project_config = session.get('project_config', {})
         
         # 1. Fragen aus der Datenbank abrufen
@@ -589,24 +652,35 @@ def export_questions_pdf():
         style.alignment = TA_LEFT
         style.leading = 14
 
-        # --- Deckblatt zeichnen (JETZT MIT LOGO) ---
+        # --- Deckblatt zeichnen ---
         logo_path = os.path.join(basedir, 'static', 'img', 'logo.png')
         if os.path.exists(logo_path):
-            # Logo zentriert oben platzieren (Breite 110 Punkte, Höhe wird automatisch angepasst)
             c.drawImage(logo_path, x=(width/2 - 63*mm), y=(height - 150*mm), width=355, preserveAspectRatio=True, mask='auto')
 
         c.setFont("Helvetica-Bold", 24)
-        c.drawCentredString(width / 2, height - 150*mm, "Fragebogen zur ISO50001") # Text nach unten verschoben
+        c.drawCentredString(width / 2, height - 150*mm, "Fragebogen zur ISO50001")
         c.setFont("Helvetica", 12)
-        c.drawCentredString(width / 2, height - 180*mm, f"Bearbeiter: {bearbeiter}") # Text nach unten verschoben
-        c.drawCentredString(width / 2, height - 200*mm, f"Datum: {date.today().strftime('%d.%m.%Y')}") # Text nach unten verschoben
+        c.drawCentredString(width / 2, height - 180*mm, f"Kunde: {kunde}")
+        c.drawCentredString(width / 2, height - 200*mm, f"Bearbeiter: {bearbeiter}")
+        c.drawCentredString(width / 2, height - 220*mm, f"Datum: {date.today().strftime('%d.%m.%Y')}")
         c.showPage()
 
-        # 3. Layout-Variablen und Header-Funktion
+        # 3. Layout-Variablen und Header-Funktionen
         x_margin = 18 * mm
         col_widths = [80 * mm, 55 * mm, 45 * mm]
         
-        def draw_header(y_start):
+        def draw_page_header(canvas, page_width, page_height):
+            """Zeichnet den Seitentitel und das Logo auf jeder neuen Seite."""
+            canvas.setFont("Helvetica-Bold", 18)
+            canvas.drawString(page_width/2 - 30*mm, page_height - 15*mm, 'ISO50001 Fragebogen')
+            logo_path_header = os.path.join(basedir, 'static', 'img', 'logo.png')
+            
+            # GEÄNDERT: Bereinigt, um doppelte Zeichen-Aufrufe zu entfernen.
+            if os.path.exists(logo_path_header):
+                canvas.drawImage(logo_path_header, x=160*mm, y=207*mm, width=105, preserveAspectRatio=True, mask='auto')
+
+        def draw_table_header(y_start):
+            """Zeichnet die Kopfzeile der Tabelle."""
             c.setFont("Helvetica-Bold", 10)
             header_height = 8 * mm
             c.drawString(x_margin + 2*mm, y_start - (header_height / 1.5), "Frage")
@@ -620,7 +694,8 @@ def export_questions_pdf():
         category_order = ['Allgemein', 'Trafo', 'Einspeisung', 'Abgang']
         keyfunc = lambda q: (q.category, q.category_index)
         grouped_data = {k: list(v) for k, v in groupby(fragen_db, key=keyfunc)}
-
+        
+        draw_page_header(c, width, height)
         y_cursor = height - 25 * mm
 
         for category in category_order:
@@ -633,6 +708,7 @@ def export_questions_pdf():
 
                 if y_cursor < 100 * mm:
                     c.showPage()
+                    draw_page_header(c, width, height)
                     y_cursor = height - 25 * mm
 
                 title = category if category == 'Allgemein' else f'{category} {i}'
@@ -640,12 +716,22 @@ def export_questions_pdf():
                 c.drawString(x_margin, y_cursor, title)
                 y_cursor -= 10*mm
                 
-                y_cursor = draw_header(y_cursor)
+                y_cursor = draw_table_header(y_cursor)
 
                 for q in questions:
-                    display_options = q.options.replace(',', ', ')
-                    if 'ja' in display_options.lower() and 'nein' not in display_options.lower():
-                        display_options += ", Nein"
+                    # --- START: NEUER LOGIK-BLOCK ---
+                    question_text = q.question.strip()
+
+                    if question_text == "Bis zur wie vielten Oberschwingung soll gemessen werden?":
+                        display_options = "1. - 63."
+                    elif question_text == "Spannungsversorgung des Messgerätes?":
+                        display_options = "SpannungV AC oder DC"
+                    else:
+                        # Fallback: Die ursprüngliche Logik für alle anderen Fragen
+                        display_options = q.options.replace(',', ', ')
+                        if 'ja' in display_options.lower() and 'nein' not in display_options.lower():
+                            display_options += ", Nein"
+                    # --- ENDE: NEUER LOGIK-BLOCK ---
                     
                     question_p = Paragraph(q.question, style)
                     options_p = Paragraph(display_options, style)
@@ -657,8 +743,9 @@ def export_questions_pdf():
 
                     if y_cursor - row_height < 40 * mm:
                         c.showPage()
+                        draw_page_header(c, width, height)
                         y_cursor = height - 25 * mm
-                        y_cursor = draw_header(y_cursor)
+                        y_cursor = draw_table_header(y_cursor)
 
                     question_p.drawOn(c, x_margin + 2*mm, y_cursor - row_height + 2*mm)
                     options_p.drawOn(c, x_margin + col_widths[0] + 2*mm, y_cursor - row_height + 2*mm)
